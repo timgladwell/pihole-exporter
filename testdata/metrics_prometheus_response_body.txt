@@ -1,0 +1,71 @@
+# HELP pihole_exporter_build_info Build information for the Pi-hole exporter.
+# TYPE pihole_exporter_build_info gauge
+pihole_exporter_build_info{pihole_api_version="6.0"} 1
+# HELP pihole_exporter_scrape_duration_seconds Duration of the last Pi-hole scrape in seconds.
+# TYPE pihole_exporter_scrape_duration_seconds gauge
+# HELP pihole_exporter_scrape_success Whether the last Pi-hole scrape succeeded.
+# TYPE pihole_exporter_scrape_success gauge
+pihole_exporter_scrape_success 1
+# HELP pihole_query_types_by_type Number of individual query types
+# TYPE pihole_query_types_by_type gauge
+pihole_query_types_by_type{type="A"} 1
+# HELP pihole_summary_clients_active Number of active clients (seen in the last 24 hours)
+# TYPE pihole_summary_clients_active gauge
+pihole_summary_clients_active 1
+# HELP pihole_summary_clients_total Total number of clients seen by FTL
+# TYPE pihole_summary_clients_total gauge
+pihole_summary_clients_total 1
+# HELP pihole_summary_gravity_domains_being_blocked Number of domain on your Pi-hole's gravity list
+# TYPE pihole_summary_gravity_domains_being_blocked gauge
+pihole_summary_gravity_domains_being_blocked 1
+# HELP pihole_summary_gravity_last_update_timestamp_seconds Unix timestamp of last gravity update (may be `0` if unknown)
+# TYPE pihole_summary_gravity_last_update_timestamp_seconds gauge
+pihole_summary_gravity_last_update_timestamp_seconds 1
+# HELP pihole_summary_queries_blocked Number of blocked queries
+# TYPE pihole_summary_queries_blocked gauge
+pihole_summary_queries_blocked 0
+# HELP pihole_summary_queries_by_reply Number of individual replies
+# TYPE pihole_summary_queries_by_reply gauge
+pihole_summary_queries_by_reply{reply="IP"} 1
+# HELP pihole_summary_queries_by_status Number of individual queries (by status)
+# TYPE pihole_summary_queries_by_status gauge
+pihole_summary_queries_by_status{status="FORWARDED"} 1
+# HELP pihole_summary_queries_by_type Number of individual queries
+# TYPE pihole_summary_queries_by_type gauge
+pihole_summary_queries_by_type{type="A"} 1
+# HELP pihole_summary_queries_cached Number of queries replied to from cache or local configuration
+# TYPE pihole_summary_queries_cached gauge
+pihole_summary_queries_cached 0
+# HELP pihole_summary_queries_forwarded Number of queries that have been forwarded upstream
+# TYPE pihole_summary_queries_forwarded gauge
+pihole_summary_queries_forwarded 1
+# HELP pihole_summary_queries_frequency Average number of queries per second
+# TYPE pihole_summary_queries_frequency gauge
+pihole_summary_queries_frequency 1
+# HELP pihole_summary_queries_percent_blocked Percent of blocked queries
+# TYPE pihole_summary_queries_percent_blocked gauge
+pihole_summary_queries_percent_blocked 0
+# HELP pihole_summary_queries_total Total number of queries
+# TYPE pihole_summary_queries_total gauge
+pihole_summary_queries_total 1
+# HELP pihole_summary_queries_unique_domains Number of unique domains FTL knows
+# TYPE pihole_summary_queries_unique_domains gauge
+pihole_summary_queries_unique_domains 1
+# HELP pihole_top_clients_blocked_queries Number of blocked queries
+# TYPE pihole_top_clients_blocked_queries gauge
+pihole_top_clients_blocked_queries 0
+# HELP pihole_top_clients_total_queries Total number of queries
+# TYPE pihole_top_clients_total_queries gauge
+pihole_top_clients_total_queries 1
+# HELP pihole_top_domains_blocked_queries Number of blocked queries
+# TYPE pihole_top_domains_blocked_queries gauge
+pihole_top_domains_blocked_queries 0
+# HELP pihole_top_domains_total_queries Total number of queries
+# TYPE pihole_top_domains_total_queries gauge
+pihole_top_domains_total_queries 1
+# HELP pihole_upstreams_forwarded_queries Number of forwarded queries
+# TYPE pihole_upstreams_forwarded_queries gauge
+pihole_upstreams_forwarded_queries 1
+# HELP pihole_upstreams_total_queries Total number of queries
+# TYPE pihole_upstreams_total_queries gauge
+pihole_upstreams_total_queries 1

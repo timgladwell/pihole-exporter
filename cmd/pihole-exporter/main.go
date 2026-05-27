@@ -24,6 +24,15 @@ const (
 )
 
 func main() {
+	server, shutdown := buildServer()
+	defer shutdown()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("serve: %v", err)
+	}
+}
+
+func buildServer() (*http.Server, func()) {
 	cfg := parseConfig()
 
 	client, err := pihole.NewAuthClient(cfg.piHoleURL, cfg.password)
@@ -37,6 +46,8 @@ func main() {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
+	shutdown := func() {}
+
 	switch cfg.metricsExporter {
 	case metricsExporterPrometheus:
 		registry := prometheus.NewRegistry()
@@ -47,27 +58,24 @@ func main() {
 		if err != nil {
 			log.Fatalf("create %s metrics exporter: %v", cfg.metricsExporter, err)
 		}
-		defer func() {
+		shutdown = func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := provider.Shutdown(ctx); err != nil {
 				log.Printf("shutdown metrics exporter: %v", err)
 			}
-		}()
+		}
 	default:
 		log.Fatalf("unsupported metrics exporter %q", cfg.metricsExporter)
 	}
 
-	server := &http.Server{
+	log.Printf("pihole-exporter listening on %s, metrics exporter %s, compiled for Pi-hole API %s", cfg.listenAddr, cfg.metricsExporter, pihole.CompiledPiHoleAPIVersion)
+
+	return &http.Server{
 		Addr:              cfg.listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	log.Printf("pihole-exporter listening on %s, metrics exporter %s, compiled for Pi-hole API %s", cfg.listenAddr, cfg.metricsExporter, pihole.CompiledPiHoleAPIVersion)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("serve: %v", err)
-	}
+	}, shutdown
 }
 
 type config struct {
