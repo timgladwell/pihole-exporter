@@ -130,6 +130,56 @@ func TestLogoutDeletesSession(t *testing.T) {
 	}
 }
 
+func TestUserAgentIsSentOnEveryRequest(t *testing.T) {
+	t.Parallel()
+
+	agents := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agents[r.Method+" "+r.URL.Path] = r.Header.Get("User-Agent")
+		switch {
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case r.URL.Path == "/api/auth":
+			writeAuthResponse(t, w, "sid-1", "csrf-1", 300)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewAuthClient(server.URL, "app-password", WithUserAgent("pihole-exporter/v1.2.3"))
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+	client.now = fixedClock(time.Unix(1000, 0))
+
+	if _, err := client.GetJSONMap(context.Background(), "/stats/summary"); err != nil {
+		t.Fatalf("GetJSONMap() error = %v", err)
+	}
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+
+	for _, request := range []string{"POST /api/auth", "GET /api/stats/summary", "DELETE /api/auth"} {
+		if got := agents[request]; got != "pihole-exporter/v1.2.3" {
+			t.Fatalf("User-Agent on %s = %q, want pihole-exporter/v1.2.3", request, got)
+		}
+	}
+}
+
+func TestUserAgentDefaultsToTheApplicationName(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewAuthClient("http://127.0.0.1:8080", "app-password", WithUserAgent("  "))
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+	if client.userAgent != defaultUserAgent {
+		t.Fatalf("userAgent = %q, want %q", client.userAgent, defaultUserAgent)
+	}
+}
+
 func TestLogoutWithoutSessionMakesNoRequest(t *testing.T) {
 	t.Parallel()
 

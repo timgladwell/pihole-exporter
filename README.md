@@ -118,6 +118,7 @@ scrape_configs:
 
 - Supports Pi-hole API `6.0`
 - Authenticates with a Pi-hole app password through `/api/auth`
+- Identifies itself to Pi-hole as `pihole-exporter/<version>` in the `User-Agent` header
 - Reuses and refreshes Pi-hole sessions automatically, and deletes the old session when it refreshes
 - Releases its Pi-hole session on `SIGTERM`/`SIGINT`, so the API seat is freed at shutdown rather than left to expire
 - Exposes Prometheus metrics on `/metrics` by default

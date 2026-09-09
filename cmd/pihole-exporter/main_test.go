@@ -251,6 +251,41 @@ func TestReadinessProbeFailsUntilFirstScrapeSucceeds(t *testing.T) {
 	}
 }
 
+// TestScrapeIdentifiesTheExporter checks the wiring from buildServer through
+// to the Pi-hole request: the version-bearing User-Agent has to survive it.
+func TestScrapeIdentifiesTheExporter(t *testing.T) {
+	var agents []string
+	stub := piholetest.Handler(t.Fatalf)
+	stubPiholeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agents = append(agents, r.Header.Get("User-Agent"))
+		stub.ServeHTTP(w, r)
+	}))
+	defer stubPiholeServer.Close()
+
+	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
+	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
+
+	withTestCommandLine(t, "pihole-exporter")
+
+	server, shutdown := buildServer()
+	t.Cleanup(shutdown)
+	testExporter := httptest.NewServer(server.Handler)
+	defer testExporter.Close()
+
+	if got := getStatus(t, testExporter.URL+"/metrics"); got != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want %d", got, http.StatusOK)
+	}
+
+	if len(agents) == 0 {
+		t.Fatal("stub Pi-hole saw no requests")
+	}
+	for _, agent := range agents {
+		if agent != userAgent() {
+			t.Fatalf("User-Agent = %q, want %q", agent, userAgent())
+		}
+	}
+}
+
 // TestShutdownReleasesPiholeSession covers the shutdown half of the seat
 // problem: main() runs this closure on SIGTERM, and it has to delete the
 // session rather than leave it holding an API seat until its TTL expires.

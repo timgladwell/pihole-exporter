@@ -54,7 +54,7 @@ func main() {
 func buildServer() (*http.Server, func()) {
 	cfg := parseConfig()
 
-	client, err := pihole.NewAuthClient(cfg.piHoleURL, cfg.password)
+	client, err := pihole.NewAuthClient(cfg.piHoleURL, cfg.password, pihole.WithUserAgent(userAgent()))
 	if err != nil {
 		log.Fatalf("create Pi-hole client: %v", err)
 	}
@@ -201,12 +201,24 @@ func metricsHandler(metrics http.Handler, collector *exporter.Collector) http.Ha
 	})
 }
 
+// userAgent names the exporter and its release on outbound requests, so a
+// Pi-hole admin reading their logs can tell what is scraping them.
+func userAgent() string {
+	return "pihole-exporter/" + exporter.Version
+}
+
 // probeHealth GETs /healthz on the running exporter. It exists so the
 // container HEALTHCHECK has something to run: the image ships no shell or curl.
 func probeHealth(listenAddr string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	resp, err := client.Get(healthCheckURL(listenAddr))
+	req, err := http.NewRequest(http.MethodGet, healthCheckURL(listenAddr), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", userAgent())
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

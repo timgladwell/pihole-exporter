@@ -283,7 +283,15 @@ func readSpec(path string) ([]byte, error) {
 		return os.ReadFile(path)
 	}
 
-	resp, err := http.Get(path)
+	req, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Name the tool to whoever serves the spec, rather than arriving as Go's
+	// default User-Agent.
+	req.Header.Set("User-Agent", "pihole-exporter-metricgen")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
