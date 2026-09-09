@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -44,6 +45,9 @@ type Collector struct {
 
 	mu    sync.Mutex
 	descs map[string]*prometheus.Desc
+
+	// lastScrapeOK backs the readiness probe: false until a scrape succeeds.
+	lastScrapeOK atomic.Bool
 }
 
 func NewCollector(client *pihole.AuthClient, timeout time.Duration) *Collector {
@@ -82,6 +86,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	metrics, err := c.client.CollectMetrics(ctx)
 	duration := time.Since(start).Seconds()
 	if err != nil {
+		c.lastScrapeOK.Store(false)
 		ch <- prometheus.MustNewConstMetric(scrapeSuccessDesc, prometheus.GaugeValue, 0)
 		ch <- prometheus.MustNewConstMetric(scrapeDurationDesc, prometheus.GaugeValue, duration)
 		ch <- prometheus.NewInvalidMetric(
@@ -91,6 +96,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 
+	c.lastScrapeOK.Store(true)
 	ch <- prometheus.MustNewConstMetric(scrapeSuccessDesc, prometheus.GaugeValue, 1)
 	ch <- prometheus.MustNewConstMetric(scrapeDurationDesc, prometheus.GaugeValue, duration)
 
@@ -112,6 +118,13 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			labelValues...,
 		)
 	}
+}
+
+// Ready reports whether the most recent scrape reached Pi-hole. It is false
+// before the first scrape completes, so a readiness probe fails until the
+// exporter has actually talked to Pi-hole once.
+func (c *Collector) Ready() bool {
+	return c.lastScrapeOK.Load()
 }
 
 func (c *Collector) desc(name, help string, labels []string) *prometheus.Desc {
