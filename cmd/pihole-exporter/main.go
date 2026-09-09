@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,11 +24,27 @@ const (
 	defaultListenAddr      = ":9617"
 	defaultTimeout         = 10 * time.Second
 	defaultMetricsExporter = "prometheus"
+	shutdownTimeout        = 5 * time.Second
 )
 
 func main() {
 	server, shutdown := buildServer()
 	defer shutdown()
+
+	// SIGTERM is how Kubernetes and Docker stop the process; shutting down
+	// cleanly is what gets the Pi-hole session released rather than left to
+	// occupy an API seat until its TTL expires.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		<-ctx.Done()
+		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(stopCtx); err != nil {
+			log.Printf("shutdown HTTP server: %v", err)
+		}
+	}()
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("serve: %v", err)
@@ -51,7 +69,15 @@ func buildServer() (*http.Server, func()) {
 	mux.HandleFunc("/healthz", alive)
 	mux.HandleFunc("/alive", alive)
 
-	shutdown := func() {}
+	// Releasing the Pi-hole session is part of every shutdown path, not just
+	// the OpenTelemetry one.
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := client.Logout(ctx); err != nil {
+			log.Printf("release Pi-hole session: %v", err)
+		}
+	}
 
 	switch cfg.metricsExporter {
 	case metricsExporterPrometheus:
@@ -64,12 +90,14 @@ func buildServer() (*http.Server, func()) {
 		if err != nil {
 			log.Fatalf("create %s metrics exporter: %v", cfg.metricsExporter, err)
 		}
+		releaseSession := shutdown
 		shutdown = func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
 			if err := provider.Shutdown(ctx); err != nil {
 				log.Printf("shutdown metrics exporter: %v", err)
 			}
+			releaseSession()
 		}
 	default:
 		log.Fatalf("unsupported metrics exporter %q", cfg.metricsExporter)

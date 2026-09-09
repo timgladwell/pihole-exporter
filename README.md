@@ -118,7 +118,8 @@ scrape_configs:
 
 - Supports Pi-hole API `6.0`
 - Authenticates with a Pi-hole app password through `/api/auth`
-- Reuses and refreshes Pi-hole sessions automatically
+- Reuses and refreshes Pi-hole sessions automatically, and deletes the old session when it refreshes
+- Releases its Pi-hole session on `SIGTERM`/`SIGINT`, so the API seat is freed at shutdown rather than left to expire
 - Exposes Prometheus metrics on `/metrics` by default
 - Can export metrics through OpenTelemetry OTLP or stdout exporters
 - Exposes a liveness check on `/healthz` and `/alive`, and a Kubernetes readiness probe on `/metrics?probe=true`

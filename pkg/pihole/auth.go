@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -106,6 +107,13 @@ func (c *AuthClient) Session(ctx context.Context) (Session, error) {
 		return c.session, nil
 	}
 
+	// Release the seat the old session holds before taking another one:
+	// Pi-hole caps concurrent API sessions, and an abandoned SID occupies a
+	// seat until its own TTL clears it.
+	if err := c.logoutLocked(ctx); err != nil {
+		log.Printf("release previous Pi-hole session: %v", err)
+	}
+
 	session, err := c.authenticate(ctx)
 	if err != nil {
 		return Session{}, err
@@ -136,6 +144,52 @@ func (c *AuthClient) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.session = Session{}
+}
+
+// Logout deletes the current session via DELETE /api/auth, releasing the
+// Pi-hole API seat it holds, and clears it locally. It is a no-op when there
+// is no live session.
+func (c *AuthClient) Logout(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.logoutLocked(ctx)
+}
+
+// logoutLocked clears the session and asks Pi-hole to delete it. The local
+// session is dropped whatever the API says, so a failed logout never blocks
+// re-authentication or shutdown; the error is returned for logging only.
+func (c *AuthClient) logoutLocked(ctx context.Context) error {
+	session := c.session
+	c.session = Session{}
+
+	if !session.Valid || session.SID == "" {
+		return nil
+	}
+	// An expired session has already been released by Pi-hole; deleting it
+	// would just draw a 401.
+	if !c.now().Before(session.ExpiresAt) {
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.resolve("/api/auth"), nil)
+	if err != nil {
+		return fmt.Errorf("create logout request: %w", err)
+	}
+	req.Header.Set("X-FTL-SID", session.SID)
+	if session.CSRF != "" {
+		req.Header.Set("X-FTL-CSRF", session.CSRF)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete pihole session: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("delete pihole session: %s", resp.Status)
+	}
+	return nil
 }
 
 func (c *AuthClient) authenticate(ctx context.Context) (Session, error) {

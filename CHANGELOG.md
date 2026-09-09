@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `/alive` liveness endpoint, and a readiness probe on `/metrics?probe=true` that reports the last scrape's outcome without contacting Pi-hole
 - `-healthcheck` flag that probes `/healthz` and exits, used by the image `HEALTHCHECK`
 - OCI image labels linking the image back to this repository
+- Pi-hole sessions are now deleted through `DELETE /api/auth` when they are refreshed and on graceful shutdown, releasing the API seat instead of leaving it occupied until its TTL expires
 - MIT `LICENSE`, previously missing
 - README note recording that this repository is a fork of `alantoch/pihole-exporter`
 

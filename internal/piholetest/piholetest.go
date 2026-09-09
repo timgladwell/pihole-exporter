@@ -21,6 +21,12 @@ func Handler(fail func(format string, args ...any)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/auth":
+			// The exporter deletes its session on shutdown to release the
+			// Pi-hole API seat.
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			writeJSON(fail, w, map[string]any{
 				"session": map[string]any{
 					"valid":    true,
