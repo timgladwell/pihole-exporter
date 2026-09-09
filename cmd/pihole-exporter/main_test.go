@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/timgladwell/pihole-exporter/internal/piholetest"
@@ -162,4 +163,40 @@ func withTestCommandLine(t *testing.T, args ...string) {
 		os.Args = oldArgs
 		flag.CommandLine = oldCommandLine
 	})
+}
+
+func TestHealthCheckURLUsesLoopbackForWildcardBind(t *testing.T) {
+	t.Parallel()
+
+	if got, want := healthCheckURL(":9617"), "http://127.0.0.1:9617/healthz"; got != want {
+		t.Fatalf("healthCheckURL(\":9617\") = %q, want %q", got, want)
+	}
+	if got, want := healthCheckURL("0.0.0.0:9617"), "http://127.0.0.1:9617/healthz"; got != want {
+		t.Fatalf("healthCheckURL(\"0.0.0.0:9617\") = %q, want %q", got, want)
+	}
+	if got, want := healthCheckURL("192.168.0.2:9617"), "http://192.168.0.2:9617/healthz"; got != want {
+		t.Fatalf("healthCheckURL(\"192.168.0.2:9617\") = %q, want %q", got, want)
+	}
+}
+
+func TestProbeHealthChecksStatus(t *testing.T) {
+	t.Parallel()
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer healthy.Close()
+
+	if err := probeHealth(strings.TrimPrefix(healthy.URL, "http://")); err != nil {
+		t.Fatalf("probeHealth() error = %v", err)
+	}
+
+	unhealthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer unhealthy.Close()
+
+	if err := probeHealth(strings.TrimPrefix(unhealthy.URL, "http://")); err == nil {
+		t.Fatal("probeHealth() error = nil, want error for 503")
+	}
 }

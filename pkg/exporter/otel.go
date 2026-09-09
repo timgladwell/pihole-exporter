@@ -165,7 +165,10 @@ func registerOpenTelemetryMetrics(meter metric.Meter, client *pihole.AuthClient,
 		observer.ObserveFloat64(
 			buildInfoGauge,
 			1,
-			metric.WithAttributes(attribute.String("pihole_api_version", pihole.CompiledPiHoleAPIVersion)),
+			metric.WithAttributes(
+				attribute.String("version", Version),
+				attribute.String("pihole_api_version", pihole.CompiledPiHoleAPIVersion),
+			),
 		)
 
 		scrapeCtx, cancel := context.WithTimeout(ctx, timeout)

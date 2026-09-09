@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -69,7 +70,7 @@ func buildServer() (*http.Server, func()) {
 		log.Fatalf("unsupported metrics exporter %q", cfg.metricsExporter)
 	}
 
-	log.Printf("pihole-exporter listening on %s, metrics exporter %s, compiled for Pi-hole API %s", cfg.listenAddr, cfg.metricsExporter, pihole.CompiledPiHoleAPIVersion)
+	log.Printf("pihole-exporter %s listening on %s, metrics exporter %s, compiled for Pi-hole API %s", exporter.Version, cfg.listenAddr, cfg.metricsExporter, pihole.CompiledPiHoleAPIVersion)
 
 	return &http.Server{
 		Addr:              cfg.listenAddr,
@@ -92,7 +93,15 @@ func parseConfig() config {
 	password := flag.String("password", envOrDefault(pihole.DefaultAppPasswordEnv, ""), "Pi-hole app password generated in Pi-hole settings")
 	timeout := flag.Duration("timeout", durationEnvOrDefault("SCRAPE_TIMEOUT", defaultTimeout), "Pi-hole scrape timeout")
 	metricsExporterValue := flag.String("metrics-exporter", envOrDefault("OTEL_METRICS_EXPORTER", defaultMetricsExporter), "metrics exporter: prometheus, otlp, otlpgrpc, otlphttp, or stdout")
+	healthCheck := flag.Bool("healthcheck", false, "probe /healthz on the listen address and exit; the container HEALTHCHECK uses this because the image has no shell")
 	flag.Parse()
+
+	if *healthCheck {
+		if err := probeHealth(*listenAddr); err != nil {
+			log.Fatalf("healthcheck: %v", err)
+		}
+		os.Exit(0)
+	}
 
 	if *piHoleURL == "" {
 		fatalUsage("PIHOLE_BASE_URL or -pihole-url is required")
@@ -139,6 +148,36 @@ func parseMetricsExporter(value string) (metricsExporter, error) {
 	default:
 		return "", fmt.Errorf("unsupported metrics exporter %q; supported values are prometheus, otlp, otlpgrpc, otlphttp, stdout", value)
 	}
+}
+
+// probeHealth GETs /healthz on the running exporter. It exists so the
+// container HEALTHCHECK has something to run: the image ships no shell or curl.
+func probeHealth(listenAddr string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	resp, err := client.Get(healthCheckURL(listenAddr))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %s", resp.Status)
+	}
+	return nil
+}
+
+// healthCheckURL rewrites a listen address into a loopback /healthz URL, so a
+// wildcard bind such as ":9617" is probed on 127.0.0.1 rather than an empty host.
+func healthCheckURL(listenAddr string) string {
+	host, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return "http://" + listenAddr + "/healthz"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/healthz"
 }
 
 func envOrDefault(key, fallback string) string {

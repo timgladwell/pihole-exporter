@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 <!-- Add a new entry for each release. The release workflow checks that an entry matching the tag exists. -->
 
+## [Unreleased]
+
+### Added
+
+- `version` label on `pihole_exporter_build_info`, injected from the release tag at build time
+- `linux/amd64` images alongside `linux/arm64`, published as a manifest list
+- `-healthcheck` flag that probes `/healthz` and exits, used by the image `HEALTHCHECK`
+- OCI image labels linking the image back to this repository
+- MIT `LICENSE`, previously missing
+- README note recording that this repository is a fork of `alantoch/pihole-exporter`
+
+### Changed
+
+- Base image is now `gcr.io/distroless/static:nonroot`: no shell, no package manager, runs as UID 65532
+- `:latest` now moves only for stable releases; pre-releases publish their version tag only
+- The release workflow runs gofmt, build, vet and race tests before publishing
+
 ## [v0.1.0-alpha] - 2026-05-23
 
 ### Added

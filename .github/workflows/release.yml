@@ -33,21 +33,55 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build binary for linux/arm64
+      # Same checks as ci.yml, repeated here because a release is published from
+      # a tag and never re-runs the pull request's status checks.
+      - name: Check formatting
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-          go build -trimpath -ldflags="-s -w" -o pihole-exporter ./cmd/pihole-exporter
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "These files are not gofmt-formatted:" >&2
+            echo "${unformatted}" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       - name: Build and push image
         run: |
+          set -euo pipefail
           version="${{ github.ref_name }}"
-          podman build \
-            --platform linux/arm64 \
-            --tag "${{ env.IMAGE }}:${version}" \
-            --tag "${{ env.IMAGE }}:latest" \
-            .
-          podman push "${{ env.IMAGE }}:${version}"
-          podman push "${{ env.IMAGE }}:latest"
+
+          podman manifest create "${{ env.IMAGE }}:${version}"
+
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" \
+            go build -trimpath \
+              -ldflags="-s -w -X github.com/timgladwell/pihole-exporter/pkg/exporter.Version=${version}" \
+              -o pihole-exporter ./cmd/pihole-exporter
+
+            podman build \
+              --platform "linux/${arch}" \
+              --manifest "${{ env.IMAGE }}:${version}" \
+              --build-arg "VERSION=${version}" \
+              --build-arg "REVISION=${{ github.sha }}" \
+              .
+          done
+
+          podman manifest push --all "${{ env.IMAGE }}:${version}" "docker://${{ env.IMAGE }}:${version}"
+
+          # `latest` must never point at a pre-release.
+          if [ "${{ github.event.release.prerelease }}" = "false" ]; then
+            podman manifest push --all "${{ env.IMAGE }}:${version}" "docker://${{ env.IMAGE }}:latest"
+          else
+            echo "Pre-release ${version}: leaving :latest untouched"
+          fi

@@ -1,6 +1,6 @@
 # HELP pihole_exporter_build_info Build information for the Pi-hole exporter.
 # TYPE pihole_exporter_build_info gauge
-pihole_exporter_build_info{pihole_api_version="6.0"} 1
+pihole_exporter_build_info{pihole_api_version="6.0",version="dev"} 1
 # HELP pihole_exporter_scrape_duration_seconds Duration of the last Pi-hole scrape in seconds.
 # TYPE pihole_exporter_scrape_duration_seconds gauge
 # HELP pihole_exporter_scrape_success Whether the last Pi-hole scrape succeeded.

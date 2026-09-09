@@ -10,12 +10,19 @@ import (
 	"github.com/timgladwell/pihole-exporter/pkg/pihole"
 )
 
+// Version is the exporter release, injected at build time with
+// -ldflags "-X github.com/timgladwell/pihole-exporter/pkg/exporter.Version=v0.1.0".
+var Version = "dev"
+
 var (
 	buildInfoDesc = prometheus.NewDesc(
 		"pihole_exporter_build_info",
 		"Build information for the Pi-hole exporter.",
 		nil,
-		prometheus.Labels{"pihole_api_version": pihole.CompiledPiHoleAPIVersion},
+		prometheus.Labels{
+			"version":            Version,
+			"pihole_api_version": pihole.CompiledPiHoleAPIVersion,
+		},
 	)
 	scrapeSuccessDesc = prometheus.NewDesc(
 		"pihole_exporter_scrape_success",
