@@ -57,17 +57,136 @@ The exporter has three layers:
 
 Tests use only the standard `testing` package — no test framework. Each package has its own `_test.go` files.
 
-**How to test**: Tests mock the Pi-hole HTTP API using `httptest.NewServer` and verify behavior at the HTTP boundary. Do not mock `AuthClient` or internal interfaces — wire up a real `AuthClient` pointed at a test server. This mirrors how the collector tests work: they stand up a full fake Pi-hole endpoint and gather from a real `Collector`.
+### The three layers
 
-**Test style**:
-- Use `t.Parallel()` where safe (avoid it when mutating `os.Args` or `flag.CommandLine`)
-- Use `t.Setenv()` for env vars (auto-restores on cleanup)
-- Use `t.Helper()` on all assertion/helper functions
+- **Package tests** (`pkg/pihole`, `pkg/exporter`) mock the Pi-hole HTTP API with
+  `httptest.NewServer` and verify behaviour at the HTTP boundary. Do not mock
+  `AuthClient` or internal interfaces — wire up a real `AuthClient` pointed at a
+  test server. The collector tests do the same: a full fake Pi-hole endpoint and
+  a real `Collector`.
+- **Integration test** (`cmd/pihole-exporter/integration_test.go`) runs the built
+  binary as a process against the stub Pi-hole. It covers what only the assembled
+  command can break: flag and env wiring, the listener, the `-healthcheck` path.
+- **System test** (the CI `image` job) runs the container image against
+  `internal/piholetest/stub`. It covers what only the image can break: entrypoint,
+  non-root user, the `HEALTHCHECK`, and that the binary in the image runs at all.
+
+New behaviour lands with a happy-path test at the lowest layer that can see it,
+plus the sad paths that actually happen in operation — Pi-hole down, auth
+rejected, a body that does not parse, a scrape past the timeout. A feature whose
+only test is "it works when everything works" is half-tested.
+
+### Mocks validate; stubs supply a value
+
+The two are not the same thing and the distinction decides what a test proves.
+
+- A **mock** stands in for a system outside the test's control that we integrate
+  with — here, Pi-hole. A mock validates: it asserts the shape and content of
+  every request it receives, how many arrived, and in what order. A request that
+  does not match an expectation is a failure, and so is an expected request that
+  never arrived. Think `webmock`, not "a server that returns JSON".
+- A **stub** supplies a trivial value the test does not care about — a build
+  version, a fixed clock. It asserts nothing, and that is correct.
+
+Mock only across a boundary we do not control. Do not mock `AuthClient` or
+internal interfaces: wire up the real thing pointed at a mock Pi-hole, so what is
+asserted is the traffic, not that a Go method was called.
+
+The behaviour worth asserting is usually sequence and count, not payloads:
+authenticate, *then* request stats; zero authentication calls when a valid
+session is cached; exactly one delete per session, carrying the SID being
+deleted. `internal/piholetest.Handler` does not do this yet — it answers by path
+and validates nothing (#31).
+
+- Request assertions cover method, path, headers (`X-FTL-SID`, `X-FTL-CSRF`,
+  `User-Agent`, `Accept`) and the decoded body.
+- Response bodies should look like a real Pi-hole's, captured from one where
+  practical (`PIHOLE_LIVE_TEST=1`) and kept in `internal/piholetest` or
+  `testdata/`. A fixture that resembles the real API is what makes an upstream
+  change show up as a test failure instead of a metric that quietly stops.
+- Extend the shared mock rather than hand-rolling a new server per test, so every
+  layer agrees on what a Pi-hole is and the assertions do not drift apart.
+
+### Nothing is manual, and "too hard to test" is a design problem
+
+- If something cannot be tested, refactor the code — do not lower the standard.
+  The usual culprit is operating-system integration: signals, `os.Exit`,
+  `os.Args`, listeners, clocks. A function that calls `os.Exit` cannot be tested,
+  because it takes the test binary down with it.
+- Keep that surface in a thin edge with no logic in it (`main`), and put
+  everything else below it in functions that take arguments and return errors.
+  Testing OS integration directly is difficult and fragile; testing everything
+  else is not, once it is no longer entangled with it. See #28.
+- The only thing that justifies a manual check is infrastructure CI cannot have:
+  a real Pi-hole (`PIHOLE_LIVE_TEST=1`, skipped otherwise) or a published
+  manifest list (#29). Each of those gets an issue naming how it is exercised.
+- Never synchronise a test with `time.Sleep`. Inject the clock (`AuthClient.now`)
+  or poll a condition with a deadline. Sleep-based tests are the ones that go
+  flaky under `-race` in CI and get deleted a year later.
+
+### Resiliency paths are part of the expected behaviour
+
+The exporter sits between two systems it does not control, so how it behaves
+when they misbehave is a feature, and gets tested like one:
+
+- Pi-hole unreachable, refusing auth, or slower than the scrape timeout: the
+  scrape fails, `pihole_exporter_scrape_success` goes to 0, `_scrape_error`
+  appears, and the *next* scrape recovers without a restart.
+- No Pi-hole at all at startup: the exporter still starts and still serves
+  `/metrics`, reporting the failure through those gauges. A dependency being
+  down is not a reason to refuse to run.
+- The OTLP receiver going away: push failures are logged, the exporter keeps
+  collecting, and nothing accumulates without a bound.
+- Nobody scraping for a long time: memory does not grow unbounded. The
+  cardinality risk is the labelled metrics (`top_clients`, `top_domains`,
+  `types`, `status`, `replies`), where the label set follows network traffic
+  rather than anything the exporter controls.
+
+Assumptions about the environment get questioned and then asserted, so a future
+change cannot quietly break them: there is not always exactly one Pi-hole, and a
+rolling restart means two instances answer the same address for a few seconds
+(#33). Load testing belongs in `go test` too — cardinality churn over thousands
+of scrapes, idle allocation, concurrent scrapes under `-race` — not in a separate
+harness we never run (#35). Guard the slow cases with `testing.Short()`.
+
+### Consistent behaviour beats prevented failure
+
+Superior software behaves the same way every time, including when it fails.
+Preventing every failure is not the goal — failing the same way, saying so, and
+recovering on the next cycle usually is. Practically:
+
+- Prefer a predictable failure and a clean restart over heroic in-place
+  recovery. Never a silent partial state.
+- Every failure path is observable: a metric, or a log line naming what failed
+  and why. If a test exercises a failure, it asserts the observable evidence too
+  — that is what makes an incident diagnosable rather than a guess.
+- Degrade in one direction only: a failed scrape must not corrupt the last good
+  state or leave the session, the meter provider, or the HTTP server in a
+  half-built condition.
+
+### Go specifics worth knowing here
+
+- `t.Setenv` panics if the test also calls `t.Parallel()`. Tests that set env
+  vars or touch `flag.CommandLine` run serially; everything else uses
+  `t.Parallel()`.
+- `t.Cleanup` over `defer` in helpers, so the caller cannot forget it.
+- Assert sentinel errors with `errors.Is` (`ErrUnauthenticated`,
+  `ErrMissingPassword`) rather than matching message text.
+- `go test -race` is what catches the concurrency bugs this codebase can
+  actually have: the session mutex, and shutdown racing an in-flight scrape.
+  CI runs it; run it before pushing.
+
+### Style
+
+- Use `t.Helper()` on all assertion and helper functions
 - Error check pattern: `if err != nil { t.Fatalf("Thing() error = %v", err) }`
 - Assertion pattern: `if got != want { t.Fatalf("Field = %v, want %v", got, want) }`
 - One test function per scenario; no table-driven tests in this codebase
+- Name the test after the behaviour, not the function:
+  `TestShutdownReleasesPiholeSession`, not `TestShutdown`
 
-**Coverage expectations**: All new behaviour in `pkg/pihole`, `pkg/exporter`, and `cmd/pihole-exporter` must have tests. Live tests against a real Pi-hole are gated by `PIHOLE_LIVE_TEST=1` and skipped otherwise.
+**Coverage expectations**: all new behaviour in `pkg/pihole`, `pkg/exporter`, and
+`cmd/pihole-exporter` must have tests.
 
 ## CI
 
