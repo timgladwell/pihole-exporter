@@ -13,7 +13,7 @@ docker run -d \
   -p 9617:9617 \
   -e PIHOLE_BASE_URL="http://192.168.0.2:9000" \
   -e PIHOLE_APP_PASSWORD="your-app-password" \
-  alantoch/pihole-exporter:latest
+  ghcr.io/timgladwell/pihole-exporter:latest
 ```
 
 Then scrape `http://localhost:9617/metrics` or check the exporter with:
@@ -29,7 +29,7 @@ Prometheus is the default metrics exporter. To use another backend, set `OTEL_ME
 ```yaml
 services:
   pihole-exporter:
-    image: alantoch/pihole-exporter:latest
+    image: ghcr.io/timgladwell/pihole-exporter:latest
     restart: unless-stopped
     ports:
       - "9617:9617"
@@ -50,7 +50,7 @@ Example Compose service using `host.docker.internal`:
 ```yaml
 services:
   pihole-exporter:
-    image: alantoch/pihole-exporter:latest
+    image: ghcr.io/timgladwell/pihole-exporter:latest
     restart: unless-stopped
     ports:
       - "9617:9617"
@@ -66,7 +66,7 @@ If the exporter is attached to an internal monitoring network, add a second non-
 ```yaml
 services:
   pihole-exporter:
-    image: alantoch/pihole-exporter:latest
+    image: ghcr.io/timgladwell/pihole-exporter:latest
     restart: unless-stopped
     ports:
       - "9617:9617"
@@ -165,7 +165,7 @@ docker run --rm -p 9617:9617 \
   -e PIHOLE_APP_PASSWORD="your-app-password" \
   -e OTEL_METRICS_EXPORTER="otlphttp" \
   -e OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318" \
-  alantoch/pihole-exporter:latest
+  ghcr.io/timgladwell/pihole-exporter:latest
 ```
 
 With OpenTelemetry exporters, `/healthz` remains available on the HTTP listener. `/metrics` is only registered when the selected exporter is `prometheus`.
@@ -209,28 +209,23 @@ Build and push a multi-architecture image for AMD64 and ARM64:
 ```sh
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t alantoch/pihole-exporter:latest \
+  -t ghcr.io/timgladwell/pihole-exporter:latest \
   --push .
 ```
 
-## Scheduled Docker Releases
+## Releases
 
-The GitHub Actions workflow in `.github/workflows/docker-release.yml` runs every 24 hours and can also be started manually.
+Images are published to GitHub Container Registry by `.github/workflows/release.yml`, which triggers when a GitHub Release is **published**.
 
 Each run:
 
-- Regenerates `pkg/pihole/metrics_gen.go` from the latest Pi-hole OpenAPI spec
-- Reads the embedded `CompiledPiHoleAPIVersion`
-- Checks whether `alantoch/pihole-exporter:<api-version>` already exists on Docker Hub
-- Skips the Docker build when that version tag already exists
-- Builds and pushes both `alantoch/pihole-exporter:latest` and `alantoch/pihole-exporter:<api-version>` when the version tag is new
+- Verifies `CHANGELOG.md` contains an entry matching the release tag (format `## [v0.1.0]`)
+- Builds a static `linux/arm64` binary with `CGO_ENABLED=0`
+- Pushes `ghcr.io/timgladwell/pihole-exporter:<tag>` and `:latest`
 
-Configure these repository secrets before enabling the workflow:
+No secrets need configuring — the workflow authenticates to GHCR with the built-in `GITHUB_TOKEN`.
 
-| Secret | Description |
-| --- | --- |
-| `DOCKERHUB_USERNAME` | Docker Hub username |
-| `DOCKERHUB_TOKEN` | Docker Hub access token with permission to push `alantoch/pihole-exporter` |
+To cut a release: add the CHANGELOG entry, then publish a GitHub Release with a matching `v`-prefixed tag.
 
 Run the locally built image:
 
@@ -268,7 +263,7 @@ Example `compose.yaml` with Prometheus:
 ```yaml
 services:
   pihole-exporter:
-    image: alantoch/pihole-exporter:latest
+    image: ghcr.io/timgladwell/pihole-exporter:latest
     restart: unless-stopped
     ports:
       - "9617:9617"
@@ -363,7 +358,7 @@ Example `compose.yaml` with Alloy:
 ```yaml
 services:
   pihole-exporter:
-    image: alantoch/pihole-exporter:latest
+    image: ghcr.io/timgladwell/pihole-exporter:latest
     restart: unless-stopped
     ports:
       - "9617:9617"
