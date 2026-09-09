@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Base image is now `gcr.io/distroless/static:nonroot`: no shell, no package manager, runs as UID 65532
 - `:latest` now moves only for stable releases; pre-releases publish their version tag only
 - The release workflow runs gofmt, build, vet and race tests before publishing
+- The release workflow now verifies the image manifest lists both `linux/amd64` and `linux/arm64` before pushing, and pulls each platform back afterwards to confirm the child images landed and carry a binary for the architecture they claim
 
 ## [v0.1.0-alpha] - 2026-05-23
 
