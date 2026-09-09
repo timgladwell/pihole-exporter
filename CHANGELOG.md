@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - `version` label on `pihole_exporter_build_info`, injected from the release tag at build time
 - `linux/amd64` images alongside `linux/arm64`, published as a manifest list
+- Integration test running the built binary as a process against a stub Pi-hole, and a CI `image` job that builds and runs the container image against the same stub
 - `/alive` liveness endpoint, and a readiness probe on `/metrics?probe=true` that reports the last scrape's outcome without contacting Pi-hole
 - `-healthcheck` flag that probes `/healthz` and exits, used by the image `HEALTHCHECK`
 - OCI image labels linking the image back to this repository

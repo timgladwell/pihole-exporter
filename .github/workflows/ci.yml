@@ -42,3 +42,80 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+  # Runs on every pull request. The Dockerfile changes rarely, but nothing else
+  # proves the assembled artefact works: that the image builds, starts as UID
+  # 65532, binds :9617, serves a real scrape, and that the shell-less
+  # HEALTHCHECK reaches `healthy`. Not a required status check — the required
+  # context is `test`.
+  image:
+    runs-on: ubuntu-latest
+
+    env:
+      PIHOLE_STUB_ADDR: 127.0.0.1:8080
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Mirrors the release workflow: the Dockerfile COPYs a pre-built binary.
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/timgladwell/pihole-exporter/pkg/exporter.Version=ci-test" \
+            -o pihole-exporter ./cmd/pihole-exporter
+
+      - name: Build image
+        run: docker build -t pihole-exporter:ci --build-arg VERSION=ci-test .
+
+      # distroless over scratch was chosen for this bundle; nothing else checks
+      # it is still where Go's TLS stack looks for it.
+      - name: Check CA bundle
+        run: |
+          set -euo pipefail
+          container="$(docker create pihole-exporter:ci)"
+          bytes="$(docker cp "${container}:/etc/ssl/certs/ca-certificates.crt" - | wc -c)"
+          docker rm "${container}" >/dev/null
+          echo "CA bundle: ${bytes} bytes"
+          if [ "${bytes}" -lt 10000 ]; then
+            echo "CA bundle missing or truncated" >&2
+            exit 1
+          fi
+
+      - name: Run image against a stub Pi-hole
+        run: |
+          set -euo pipefail
+
+          go run ./internal/piholetest/stub -listen "${PIHOLE_STUB_ADDR}" &
+          timeout 60 bash -c 'until curl -sf -X POST "http://${PIHOLE_STUB_ADDR}/api/auth" >/dev/null; do sleep 0.5; done'
+
+          # --network host lets the container reach the stub on the runner's
+          # loopback. The health flags only shorten the image's HEALTHCHECK
+          # interval; the command run is the image's own.
+          docker run -d --name exporter --network host \
+            --health-interval=2s --health-start-period=1s \
+            -e PIHOLE_BASE_URL="http://${PIHOLE_STUB_ADDR}" \
+            -e PIHOLE_APP_PASSWORD=app-password \
+            pihole-exporter:ci
+
+          timeout 60 bash -c 'until curl -sf http://127.0.0.1:9617/healthz >/dev/null; do sleep 0.5; done'
+
+          metrics="$(curl -sf http://127.0.0.1:9617/metrics)"
+          echo "${metrics}" | grep -q '^pihole_exporter_scrape_success 1$'
+          echo "${metrics}" | grep -q 'pihole_exporter_build_info{.*version="ci-test".*} 1'
+          curl -sf "http://127.0.0.1:9617/metrics?probe=true" >/dev/null
+
+          # The HEALTHCHECK execs the binary with -healthcheck in a container
+          # with no shell; only a real container run covers that.
+          timeout 60 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" exporter)" = healthy ]; do sleep 1; done'
+
+      - name: Container logs
+        if: always()
+        run: docker logs exporter || true

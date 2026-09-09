@@ -469,6 +469,16 @@ Run tests:
 go test ./...
 ```
 
+`go test ./...` covers three layers:
+
+- **Unit** — packages against a stub Pi-hole HTTP server (`internal/piholetest`).
+- **Integration** — `TestExporterProcessServesMetrics` builds the binary and runs it
+  as a real process against that stub, including the `-healthcheck` path.
+- **System** — the `image` job in CI builds the image and runs it against the same
+  stub served standalone by `internal/piholetest/stub`, asserting `/metrics`, the
+  CA bundle, and that the container's `HEALTHCHECK` reaches `healthy`. It needs a
+  container runtime, so it runs in CI rather than in `go test`.
+
 Run live authentication tests against a real Pi-hole:
 
 ```sh
