@@ -1,6 +1,8 @@
 package exporter
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -51,4 +53,31 @@ func metricValue(t *testing.T, families []*dto.MetricFamily, name string) float6
 
 	t.Fatalf("metric %s not found", name)
 	return 0
+}
+
+func TestCollectorNotReadyAfterFailedScrape(t *testing.T) {
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer broken.Close()
+
+	client, err := pihole.NewAuthClient(broken.URL, "app-password")
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+
+	collector := NewCollector(client, 5*time.Second)
+	if collector.Ready() {
+		t.Fatal("Ready() = true before any scrape, want false")
+	}
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+	if _, err := registry.Gather(); err == nil {
+		t.Fatal("Gather() error = nil, want scrape error")
+	}
+
+	if collector.Ready() {
+		t.Fatal("Ready() = true after failed scrape, want false")
+	}
 }

@@ -121,7 +121,7 @@ scrape_configs:
 - Reuses and refreshes Pi-hole sessions automatically
 - Exposes Prometheus metrics on `/metrics` by default
 - Can export metrics through OpenTelemetry OTLP or stdout exporters
-- Exposes a simple health check on `/healthz`
+- Exposes a liveness check on `/healthz` and `/alive`, and a Kubernetes readiness probe on `/metrics?probe=true`
 - Ships with a multi-stage Dockerfile that builds a static scratch image
 
 ## Requirements
@@ -172,7 +172,29 @@ docker run --rm -p 9617:9617 \
   ghcr.io/timgladwell/pihole-exporter:latest
 ```
 
-With OpenTelemetry exporters, `/healthz` remains available on the HTTP listener. `/metrics` is only registered when the selected exporter is `prometheus`.
+With OpenTelemetry exporters, `/healthz` and `/alive` remain available on the HTTP listener. `/metrics` — and with it the readiness probe — is only registered when the selected exporter is `prometheus`.
+
+### Health endpoints
+
+| Endpoint | Purpose | Response |
+| --- | --- | --- |
+| `/healthz`, `/alive` | Liveness: the process is serving HTTP. Does not contact Pi-hole. | `200` |
+| `/metrics?probe=true` | Readiness: did the last scrape reach Pi-hole? Reports cached state, so it costs Pi-hole nothing. | `200` when the last scrape succeeded, `503` before the first scrape or after a failure |
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /alive
+    port: 9617
+  initialDelaySeconds: 5
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /metrics?probe=true
+    port: 9617
+  initialDelaySeconds: 5
+  periodSeconds: 30
+```
 
 ## Run Locally
 

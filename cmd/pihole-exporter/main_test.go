@@ -200,3 +200,66 @@ func TestProbeHealthChecksStatus(t *testing.T) {
 		t.Fatal("probeHealth() error = nil, want error for 503")
 	}
 }
+
+func TestAliveEndpoint(t *testing.T) {
+	stubPiholeServer := piholetest.StartStubPiholeServer(t)
+
+	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
+	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
+
+	withTestCommandLine(t, "pihole-exporter")
+
+	server, shutdown := buildServer()
+	t.Cleanup(shutdown)
+	testExporter := httptest.NewServer(server.Handler)
+	defer testExporter.Close()
+
+	resp, err := http.Get(testExporter.URL + "/alive")
+	if err != nil {
+		t.Fatalf("Get(/alive) error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/alive status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestReadinessProbeFailsUntilFirstScrapeSucceeds(t *testing.T) {
+	stubPiholeServer := piholetest.StartStubPiholeServer(t)
+
+	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
+	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
+
+	withTestCommandLine(t, "pihole-exporter")
+
+	server, shutdown := buildServer()
+	t.Cleanup(shutdown)
+	testExporter := httptest.NewServer(server.Handler)
+	defer testExporter.Close()
+
+	if got := getStatus(t, testExporter.URL+"/metrics?probe=true"); got != http.StatusServiceUnavailable {
+		t.Fatalf("probe before first scrape = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+
+	if got := getStatus(t, testExporter.URL+"/metrics"); got != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want %d", got, http.StatusOK)
+	}
+
+	if got := getStatus(t, testExporter.URL+"/metrics?probe=true"); got != http.StatusOK {
+		t.Fatalf("probe after successful scrape = %d, want %d", got, http.StatusOK)
+	}
+}
+
+func getStatus(t *testing.T, url string) int {
+	t.Helper()
+
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("Get(%s) error = %v", url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return resp.StatusCode
+}

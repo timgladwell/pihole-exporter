@@ -42,18 +42,23 @@ func buildServer() (*http.Server, func()) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	alive := func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
-	})
+	}
+	// /alive is the Kubernetes-facing name for the same liveness answer as
+	// /healthz: the process is serving HTTP. Neither talks to Pi-hole.
+	mux.HandleFunc("/healthz", alive)
+	mux.HandleFunc("/alive", alive)
 
 	shutdown := func() {}
 
 	switch cfg.metricsExporter {
 	case metricsExporterPrometheus:
 		registry := prometheus.NewRegistry()
-		registry.MustRegister(exporter.NewCollector(client, cfg.timeout))
-		mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+		collector := exporter.NewCollector(client, cfg.timeout)
+		registry.MustRegister(collector)
+		mux.Handle("/metrics", metricsHandler(promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), collector))
 	case metricsExporterOTLP, metricsExporterOTLPGRPC, metricsExporterOTLPHTTP, metricsExporterStdout:
 		provider, err := exporter.NewOpenTelemetryMeterProvider(context.Background(), client, cfg.timeout, string(cfg.metricsExporter))
 		if err != nil {
@@ -148,6 +153,24 @@ func parseMetricsExporter(value string) (metricsExporter, error) {
 	default:
 		return "", fmt.Errorf("unsupported metrics exporter %q; supported values are prometheus, otlp, otlpgrpc, otlphttp, stdout", value)
 	}
+}
+
+// metricsHandler serves the readiness probe on /metrics?probe=true and the
+// metrics themselves otherwise. The probe reports the last scrape's outcome
+// rather than scraping, so probing costs Pi-hole nothing.
+func metricsHandler(metrics http.Handler, collector *exporter.Collector) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("probe") != "true" {
+			metrics.ServeHTTP(w, r)
+			return
+		}
+		if !collector.Ready() {
+			http.Error(w, "last Pi-hole scrape failed or has not run yet", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
+	})
 }
 
 // probeHealth GETs /healthz on the running exporter. It exists so the
