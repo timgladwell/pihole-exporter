@@ -56,7 +56,7 @@ jobs:
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build and push image
+      - name: Build image
         run: |
           set -euo pipefail
           version="${{ github.ref_name }}"
@@ -77,6 +77,27 @@ jobs:
               .
           done
 
+      # Checked before the push, where failing still gates: a published tag
+      # cannot be un-published, so a check that only runs afterwards detects a
+      # bad release rather than preventing one.
+      - name: Verify the manifest lists both platforms
+        run: |
+          set -euo pipefail
+          version="${{ github.ref_name }}"
+
+          architectures="$(podman manifest inspect "${{ env.IMAGE }}:${version}" \
+            | jq -r '.manifests[].platform.architecture' | sort -u | paste -sd, -)"
+
+          if [ "${architectures}" != "amd64,arm64" ]; then
+            echo "manifest lists [${architectures}], want [amd64,arm64]" >&2
+            exit 1
+          fi
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          version="${{ github.ref_name }}"
+
           podman manifest push --all "${{ env.IMAGE }}:${version}" "docker://${{ env.IMAGE }}:${version}"
 
           # `latest` must never point at a pre-release.
@@ -85,3 +106,34 @@ jobs:
           else
             echo "Pre-release ${version}: leaving :latest untouched"
           fi
+
+      # `--all` is what pushes the child images, not just the list that names
+      # them. Pulling each one back proves its blobs really landed in the
+      # registry, and reading the binary out proves the arm64 image holds an
+      # arm64 binary rather than an amd64 one behind an arm64 descriptor.
+      # Running it would need qemu; reading its ELF header does not.
+      - name: Verify the pushed image on each platform
+        run: |
+          set -euo pipefail
+          version="${{ github.ref_name }}"
+
+          for arch in amd64 arm64; do
+            podman rmi --force "${{ env.IMAGE }}:${version}" >/dev/null 2>&1 || true
+            podman pull --arch "${arch}" "${{ env.IMAGE }}:${version}"
+
+            container="$(podman create --arch "${arch}" "${{ env.IMAGE }}:${version}")"
+            podman cp "${container}:/usr/local/bin/pihole-exporter" "pihole-exporter-${arch}"
+            podman rm "${container}" >/dev/null
+
+            case "${arch}" in
+              amd64) want="x86-64" ;;
+              arm64) want="ARM aarch64" ;;
+            esac
+
+            described="$(file -b "pihole-exporter-${arch}")"
+            echo "${arch}: ${described}"
+            if ! printf '%s' "${described}" | grep -q "${want}"; then
+              echo "${{ env.IMAGE }}:${version} for linux/${arch} does not carry a ${want} binary" >&2
+              exit 1
+            fi
+          done
