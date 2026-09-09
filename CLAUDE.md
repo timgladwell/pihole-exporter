@@ -76,19 +76,36 @@ plus the sad paths that actually happen in operation — Pi-hole down, auth
 rejected, a body that does not parse, a scrape past the timeout. A feature whose
 only test is "it works when everything works" is half-tested.
 
-### Assert the real shape, not that something was called
+### Mocks validate; stubs supply a value
 
-- Assert the method, path, headers and body of the requests the exporter sends,
-  and decode responses into the real structures rather than eyeballing a
-  substring. `TestUserAgentIsSentOnEveryRequest` and `assertAuthRequest` are the
-  pattern.
-- Shared fixtures live in `internal/piholetest`; golden output lives in
-  `testdata/`. Extend those rather than writing a new one-off stub, so every
-  layer agrees on what a Pi-hole looks like — a stub that answers `{}` to
-  everything passes tests and proves nothing.
-- Response bodies should look like a real Pi-hole's, copied from one where
-  practical. The fixture is what makes an upstream API change show up as a test
-  failure instead of a silent metric that stops being emitted.
+The two are not the same thing and the distinction decides what a test proves.
+
+- A **mock** stands in for a system outside the test's control that we integrate
+  with — here, Pi-hole. A mock validates: it asserts the shape and content of
+  every request it receives, how many arrived, and in what order. A request that
+  does not match an expectation is a failure, and so is an expected request that
+  never arrived. Think `webmock`, not "a server that returns JSON".
+- A **stub** supplies a trivial value the test does not care about — a build
+  version, a fixed clock. It asserts nothing, and that is correct.
+
+Mock only across a boundary we do not control. Do not mock `AuthClient` or
+internal interfaces: wire up the real thing pointed at a mock Pi-hole, so what is
+asserted is the traffic, not that a Go method was called.
+
+The behaviour worth asserting is usually sequence and count, not payloads:
+authenticate, *then* request stats; zero authentication calls when a valid
+session is cached; exactly one delete per session, carrying the SID being
+deleted. `internal/piholetest.Handler` does not do this yet — it answers by path
+and validates nothing (#31).
+
+- Request assertions cover method, path, headers (`X-FTL-SID`, `X-FTL-CSRF`,
+  `User-Agent`, `Accept`) and the decoded body.
+- Response bodies should look like a real Pi-hole's, captured from one where
+  practical (`PIHOLE_LIVE_TEST=1`) and kept in `internal/piholetest` or
+  `testdata/`. A fixture that resembles the real API is what makes an upstream
+  change show up as a test failure instead of a metric that quietly stops.
+- Extend the shared mock rather than hand-rolling a new server per test, so every
+  layer agrees on what a Pi-hole is and the assertions do not drift apart.
 
 ### Nothing is manual, and "too hard to test" is a design problem
 
@@ -124,6 +141,13 @@ when they misbehave is a feature, and gets tested like one:
   cardinality risk is the labelled metrics (`top_clients`, `top_domains`,
   `types`, `status`, `replies`), where the label set follows network traffic
   rather than anything the exporter controls.
+
+Assumptions about the environment get questioned and then asserted, so a future
+change cannot quietly break them: there is not always exactly one Pi-hole, and a
+rolling restart means two instances answer the same address for a few seconds
+(#33). Load testing belongs in `go test` too — cardinality churn over thousands
+of scrapes, idle allocation, concurrent scrapes under `-race` — not in a separate
+harness we never run (#35). Guard the slow cases with `testing.Short()`.
 
 ### Consistent behaviour beats prevented failure
 
