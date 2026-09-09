@@ -1,10 +1,14 @@
 # Pi-hole Exporter
 
+> Forked from [alantoch/pihole-exporter](https://github.com/alantoch/pihole-exporter).
+> This fork is developed independently and its images are published to
+> `ghcr.io/timgladwell/pihole-exporter`.
+
 Pi-hole Exporter turns Pi-hole statistics into metrics for Prometheus or OpenTelemetry-compatible backends. It builds on the API spec so it's compatible with any version 6.0 and up.
 
 ![Pi-hole exporter Grafana dashboard](docs/images/grafana-dashboard.png)
 
-Run the Docker Hub image with your Pi-hole URL and app password:
+Run the published image with your Pi-hole URL and app password:
 
 ```sh
 docker run -d \
@@ -460,3 +464,7 @@ go generate ./...
 ```
 
 The generator is implemented in `tools/pihole-metricgen` and writes `pkg/pihole/metrics_gen.go`.
+
+## License
+
+[MIT](LICENSE)

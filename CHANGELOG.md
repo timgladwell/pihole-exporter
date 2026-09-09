@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `linux/amd64` images alongside `linux/arm64`, published as a manifest list
 - `-healthcheck` flag that probes `/healthz` and exits, used by the image `HEALTHCHECK`
 - OCI image labels linking the image back to this repository
+- MIT `LICENSE`, previously missing
+- README note recording that this repository is a fork of `alantoch/pihole-exporter`
 
 ### Changed
 

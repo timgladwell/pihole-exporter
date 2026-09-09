@@ -7,6 +7,7 @@ ARG VERSION=dev
 ARG REVISION=unknown
 LABEL org.opencontainers.image.source="https://github.com/timgladwell/pihole-exporter" \
       org.opencontainers.image.description="Pi-hole statistics exporter for Prometheus and OpenTelemetry" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
 
