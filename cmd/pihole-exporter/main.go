@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alantoch/pihole-exporter/pkg/exporter"
-	"github.com/alantoch/pihole-exporter/pkg/pihole"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/timgladwell/pihole-exporter/pkg/exporter"
+	"github.com/timgladwell/pihole-exporter/pkg/pihole"
 )
 
 const (

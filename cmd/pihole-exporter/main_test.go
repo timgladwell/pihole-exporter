@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alantoch/pihole-exporter/internal/piholetest"
-	"github.com/alantoch/pihole-exporter/pkg/pihole"
+	"github.com/timgladwell/pihole-exporter/internal/piholetest"
+	"github.com/timgladwell/pihole-exporter/pkg/pihole"
 )
 
 func TestHealthzEndpoint(t *testing.T) {

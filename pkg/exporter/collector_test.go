@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alantoch/pihole-exporter/internal/piholetest"
-	"github.com/alantoch/pihole-exporter/pkg/pihole"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/timgladwell/pihole-exporter/internal/piholetest"
+	"github.com/timgladwell/pihole-exporter/pkg/pihole"
 
 	dto "github.com/prometheus/client_model/go"
 )

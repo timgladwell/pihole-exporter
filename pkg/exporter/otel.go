@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/alantoch/pihole-exporter/pkg/pihole"
+	"github.com/timgladwell/pihole-exporter/pkg/pihole"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	otelScopeName = "github.com/alantoch/pihole-exporter"
+	otelScopeName = "github.com/timgladwell/pihole-exporter"
 
 	otelExporterOTLP     = "otlp"
 	otelExporterOTLPGRPC = "otlpgrpc"

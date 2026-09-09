@@ -1,4 +1,4 @@
-module github.com/alantoch/pihole-exporter
+module github.com/timgladwell/pihole-exporter
 
 go 1.22
 
