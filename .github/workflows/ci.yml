@@ -9,6 +9,9 @@ permissions:
   contents: read
 
 jobs:
+  # The job id `test` is the required status check name in the "No push to main"
+  # ruleset. Renaming it leaves pull requests pending forever rather than
+  # failing, because the ruleset waits for a check that is never reported.
   test:
     runs-on: ubuntu-latest
 

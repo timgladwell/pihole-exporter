@@ -75,11 +75,34 @@ Tests use only the standard `testing` package — no test framework. Each packag
 
 `go generate ./...` is deliberately **not** a CI check. It fetches the Pi-hole OpenAPI spec from the `master` branch of `pi-hole/FTL`, so a no-diff check would fail whenever upstream changes, unrelated to the PR under test.
 
+## Repo settings
+
+Settings that live in GitHub, not in the repo, and are easy to break from here.
+
+**Ruleset "No push to main"** (id 16776399), scoped to `~DEFAULT_BRANCH`:
+`non_fast_forward`, `pull_request` (0 approvals, merge commits only),
+`required_signatures`, and `required_status_checks` requiring the context
+`test`, pinned to integration_id 15368 (GitHub Actions).
+
+- The required context `test` is the **job id** in `.github/workflows/ci.yml`.
+  Renaming that job leaves pull requests pending forever rather than failing —
+  the ruleset waits for a check nothing reports.
+- `required_signatures` gates `main` only. Unsigned commits on feature branches
+  are expected and correct; they get re-signed when the stack is rebased before
+  merge.
+
+**Use HTTPS remotes, not SSH.** The signing key is a FIDO2 `sk-` key, so an SSH
+remote forces a YubiKey touch on every fetch and push.
+
 ## Release workflow
 
 Releases are triggered by publishing a GitHub Release. The workflow (`.github/workflows/release.yml`):
 1. Verifies `CHANGELOG.md` has an entry matching the release tag (format `## [v0.x.x]`).
-2. Builds a static `linux/arm64` binary with CGO disabled.
-3. Pushes `ghcr.io/<owner>/pihole-exporter:<version>` and `:latest` to GHCR using Podman.
+2. Re-runs the CI checks (gofmt, build, vet, race tests) — a release is published
+   from a tag and does not re-run the pull request's status checks.
+3. Builds static `linux/amd64` and `linux/arm64` binaries with CGO disabled, with
+   the tag injected via `-ldflags -X .../pkg/exporter.Version`.
+4. Pushes a manifest list to `ghcr.io/<owner>/pihole-exporter:<version>` using Podman.
+   `:latest` moves only when `github.event.release.prerelease` is false.
 
 A CHANGELOG entry is required before publishing a release.

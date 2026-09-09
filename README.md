@@ -198,19 +198,16 @@ go run ./cmd/pihole-exporter \
 
 ## Docker
 
-Build the image:
+The image is built `FROM gcr.io/distroless/static:nonroot`: no shell, no package
+manager, running as UID 65532. Its `HEALTHCHECK` runs the exporter's own
+`-healthcheck` flag, which probes `/healthz` and exits, because there is no
+`curl` in the image.
+
+The Dockerfile copies a prebuilt binary, so build that first:
 
 ```sh
+CGO_ENABLED=0 GOOS=linux go build -o pihole-exporter ./cmd/pihole-exporter
 docker build -t pihole-exporter .
-```
-
-Build and push a multi-architecture image for AMD64 and ARM64:
-
-```sh
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/timgladwell/pihole-exporter:latest \
-  --push .
 ```
 
 ## Releases
@@ -220,8 +217,13 @@ Images are published to GitHub Container Registry by `.github/workflows/release.
 Each run:
 
 - Verifies `CHANGELOG.md` contains an entry matching the release tag (format `## [v0.1.0]`)
-- Builds a static `linux/arm64` binary with `CGO_ENABLED=0`
-- Pushes `ghcr.io/timgladwell/pihole-exporter:<tag>` and `:latest`
+- Runs the same checks as CI: gofmt, `go build`, `go vet`, `go test -race`
+- Builds static `linux/amd64` and `linux/arm64` binaries with `CGO_ENABLED=0`, with the
+  release tag baked in and reported as the `version` label on `pihole_exporter_build_info`
+- Pushes a manifest list to `ghcr.io/timgladwell/pihole-exporter:<tag>`
+
+`:latest` tracks the newest **stable** release. Pre-releases publish their version tag
+only, so `docker pull ...:latest` never lands you on an alpha; to run one, name its tag.
 
 No secrets need configuring — the workflow authenticates to GHCR with the built-in `GITHUB_TOKEN`.
 
