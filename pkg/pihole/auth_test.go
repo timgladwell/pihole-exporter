@@ -49,7 +49,13 @@ func TestSessionRefreshesWhenTokenIsNearExpiry(t *testing.T) {
 	t.Parallel()
 
 	requests := 0
+	var deleted []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted = append(deleted, r.Header.Get("X-FTL-SID"))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		requests++
 		assertAuthRequest(t, r)
 		writeAuthResponse(t, w, "sid-"+string(rune('0'+requests)), "csrf", 60)
@@ -80,6 +86,141 @@ func TestSessionRefreshesWhenTokenIsNearExpiry(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("expected two auth requests, got %d", requests)
+	}
+	if len(deleted) != 1 || deleted[0] != first.SID {
+		t.Fatalf("deleted sessions = %v, want [%s]", deleted, first.SID)
+	}
+}
+
+func TestLogoutDeletesSession(t *testing.T) {
+	t.Parallel()
+
+	var method, sid, csrf string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			method, sid, csrf = r.Method, r.Header.Get("X-FTL-SID"), r.Header.Get("X-FTL-CSRF")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeAuthResponse(t, w, "sid-1", "csrf-1", 300)
+	}))
+	defer server.Close()
+
+	client, err := NewAuthClient(server.URL, "app-password")
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+	client.now = fixedClock(time.Unix(1000, 0))
+
+	if _, err := client.Session(context.Background()); err != nil {
+		t.Fatalf("Session() error = %v", err)
+	}
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+
+	if method != http.MethodDelete {
+		t.Fatalf("method = %q, want DELETE", method)
+	}
+	if sid != "sid-1" || csrf != "csrf-1" {
+		t.Fatalf("headers sid=%q csrf=%q, want sid-1/csrf-1", sid, csrf)
+	}
+	if client.session.Valid {
+		t.Fatal("session still valid after Logout()")
+	}
+}
+
+func TestLogoutWithoutSessionMakesNoRequest(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client, err := NewAuthClient(server.URL, "app-password")
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("expected no requests, got %d", requests)
+	}
+}
+
+func TestFailedLogoutDoesNotBlockReauth(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		requests++
+		writeAuthResponse(t, w, "sid-"+string(rune('0'+requests)), "csrf", 60)
+	}))
+	defer server.Close()
+
+	now := time.Unix(1000, 0)
+	client, err := NewAuthClient(server.URL, "app-password", WithRefreshSkew(30*time.Second))
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+	client.now = func() time.Time { return now }
+
+	if _, err := client.Session(context.Background()); err != nil {
+		t.Fatalf("Session() error = %v", err)
+	}
+
+	now = now.Add(31 * time.Second)
+
+	second, err := client.Session(context.Background())
+	if err != nil {
+		t.Fatalf("Session() refresh error = %v", err)
+	}
+	if second.SID != "sid-2" {
+		t.Fatalf("SID = %q, want sid-2", second.SID)
+	}
+}
+
+func TestLogoutSkipsExpiredSession(t *testing.T) {
+	t.Parallel()
+
+	deletes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletes++
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeAuthResponse(t, w, "sid-1", "csrf-1", 60)
+	}))
+	defer server.Close()
+
+	now := time.Unix(1000, 0)
+	client, err := NewAuthClient(server.URL, "app-password")
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+	client.now = func() time.Time { return now }
+
+	if _, err := client.Session(context.Background()); err != nil {
+		t.Fatalf("Session() error = %v", err)
+	}
+
+	now = now.Add(61 * time.Second)
+
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	if deletes != 0 {
+		t.Fatalf("expected no DELETE for an expired session, got %d", deletes)
 	}
 }
 

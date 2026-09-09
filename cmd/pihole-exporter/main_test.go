@@ -251,6 +251,41 @@ func TestReadinessProbeFailsUntilFirstScrapeSucceeds(t *testing.T) {
 	}
 }
 
+// TestShutdownReleasesPiholeSession covers the shutdown half of the seat
+// problem: main() runs this closure on SIGTERM, and it has to delete the
+// session rather than leave it holding an API seat until its TTL expires.
+func TestShutdownReleasesPiholeSession(t *testing.T) {
+	var deleted []string
+	stub := piholetest.Handler(t.Fatalf)
+	stubPiholeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/api/auth" {
+			deleted = append(deleted, r.Header.Get("X-FTL-SID"))
+		}
+		stub.ServeHTTP(w, r)
+	}))
+	defer stubPiholeServer.Close()
+
+	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
+	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
+
+	withTestCommandLine(t, "pihole-exporter")
+
+	server, shutdown := buildServer()
+	testExporter := httptest.NewServer(server.Handler)
+	defer testExporter.Close()
+
+	// Scrape once so there is a session to release.
+	if got := getStatus(t, testExporter.URL+"/metrics"); got != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want %d", got, http.StatusOK)
+	}
+
+	shutdown()
+
+	if len(deleted) != 1 || deleted[0] != "sid-1" {
+		t.Fatalf("deleted sessions = %v, want [sid-1]", deleted)
+	}
+}
+
 func getStatus(t *testing.T, url string) int {
 	t.Helper()
 
