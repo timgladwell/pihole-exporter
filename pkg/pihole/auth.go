@@ -18,6 +18,11 @@ import (
 const (
 	DefaultAppPasswordEnv = "PIHOLE_APP_PASSWORD"
 	defaultRefreshSkew    = 30 * time.Second
+
+	// defaultUserAgent names the exporter in Pi-hole's logs. WithUserAgent
+	// appends the release, which the pihole package cannot read itself:
+	// exporter.Version lives in the package that imports this one.
+	defaultUserAgent = "pihole-exporter"
 )
 
 var (
@@ -29,6 +34,7 @@ type AuthClient struct {
 	baseURL     *url.URL
 	password    string
 	httpClient  *http.Client
+	userAgent   string
 	refreshSkew time.Duration
 	now         func() time.Time
 
@@ -50,6 +56,16 @@ func WithHTTPClient(client *http.Client) AuthClientOption {
 	return func(c *AuthClient) {
 		if client != nil {
 			c.httpClient = client
+		}
+	}
+}
+
+// WithUserAgent sets the User-Agent sent on every Pi-hole request, so a
+// Pi-hole admin reading their logs can tell which client is scraping them.
+func WithUserAgent(userAgent string) AuthClientOption {
+	return func(c *AuthClient) {
+		if strings.TrimSpace(userAgent) != "" {
+			c.userAgent = userAgent
 		}
 	}
 }
@@ -85,6 +101,7 @@ func NewAuthClient(baseURL, password string, opts ...AuthClientOption) (*AuthCli
 		baseURL:     parsed,
 		password:    password,
 		httpClient:  http.DefaultClient,
+		userAgent:   defaultUserAgent,
 		refreshSkew: defaultRefreshSkew,
 		now:         time.Now,
 	}
@@ -175,6 +192,7 @@ func (c *AuthClient) logoutLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create logout request: %w", err)
 	}
+	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("X-FTL-SID", session.SID)
 	if session.CSRF != "" {
 		req.Header.Set("X-FTL-CSRF", session.CSRF)
@@ -206,6 +224,7 @@ func (c *AuthClient) authenticate(ctx context.Context) (Session, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

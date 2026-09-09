@@ -16,6 +16,7 @@ func (c *AuthClient) GetJSONMap(ctx context.Context, path string) (map[string]an
 		return nil, fmt.Errorf("create pihole request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
 
 	if err := c.AddAuthHeaders(ctx, req); err != nil {
 		return nil, err
