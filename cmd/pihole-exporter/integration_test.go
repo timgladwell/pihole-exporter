@@ -69,6 +69,28 @@ func TestExporterProcessServesMetrics(t *testing.T) {
 	}
 }
 
+// TestBinaryExcludesTestCode guards the production build: Go links only what
+// main imports, so the Pi-hole mocks stay out of the binary until a non-test
+// file imports them by mistake. This makes that mistake fail a test.
+func TestBinaryExcludesTestCode(t *testing.T) {
+	t.Parallel()
+
+	out, err := exec.Command("go", "list", "-deps", ".").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list error = %v, output: %s", err, out)
+	}
+
+	for _, pkg := range strings.Fields(string(out)) {
+		switch {
+		case pkg == "testing",
+			pkg == "net/http/httptest",
+			strings.HasPrefix(pkg, "github.com/jarcoal/httpmock"),
+			strings.HasPrefix(pkg, "github.com/timgladwell/pihole-exporter/internal/piholetest"):
+			t.Errorf("production binary depends on test package %s", pkg)
+		}
+	}
+}
+
 func buildExporterBinary(t *testing.T) string {
 	t.Helper()
 
