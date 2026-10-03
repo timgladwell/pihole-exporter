@@ -255,7 +255,7 @@ func TestReadinessProbeFailsUntilFirstScrapeSucceeds(t *testing.T) {
 // to the Pi-hole request: the version-bearing User-Agent has to survive it.
 func TestScrapeIdentifiesTheExporter(t *testing.T) {
 	var agents []string
-	stub := piholetest.Handler(t.Fatalf)
+	stub := piholetest.Handler(t.Errorf)
 	stubPiholeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agents = append(agents, r.Header.Get("User-Agent"))
 		stub.ServeHTTP(w, r)
@@ -291,7 +291,7 @@ func TestScrapeIdentifiesTheExporter(t *testing.T) {
 // session rather than leave it holding an API seat until its TTL expires.
 func TestShutdownReleasesPiholeSession(t *testing.T) {
 	var deleted []string
-	stub := piholetest.Handler(t.Fatalf)
+	stub := piholetest.Handler(t.Errorf)
 	stubPiholeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete && r.URL.Path == "/api/auth" {
 			deleted = append(deleted, r.Header.Get("X-FTL-SID"))

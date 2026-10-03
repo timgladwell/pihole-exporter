@@ -1,0 +1,9 @@
+{
+  "clients": [
+    {"ip": "192.0.2.10", "name": "laptop.example", "count": 2950},
+    {"ip": "192.0.2.11", "name": "phone.example", "count": 1874}
+  ],
+  "total_queries": 7497,
+  "blocked_queries": 3465,
+  "took": 0.000302
+}

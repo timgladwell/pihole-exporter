@@ -1,0 +1,35 @@
+{
+  "queries": {
+    "total": 7497,
+    "blocked": 3465,
+    "percent_blocked": 46.218487,
+    "unique_domains": 445,
+    "forwarded": 4006,
+    "cached": 26,
+    "frequency": 0,
+    "types": {
+      "A": 4101,
+      "AAAA": 2213,
+      "HTTPS": 1183
+    },
+    "status": {
+      "GRAVITY": 3465,
+      "FORWARDED": 4006,
+      "CACHE": 26
+    },
+    "replies": {
+      "IP": 3912,
+      "NXDOMAIN": 120,
+      "NODATA": 0
+    }
+  },
+  "clients": {
+    "active": 12,
+    "total": 19
+  },
+  "gravity": {
+    "domains_being_blocked": 104523,
+    "last_update": 1727800000
+  },
+  "took": 0.000731
+}
