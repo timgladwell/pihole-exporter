@@ -5,8 +5,10 @@
 
 # Local IDE
 .claude/*
-# Subagent briefs are tooling worth keeping; settings.local.json and worktrees stay local.
+# Shared Claude Code config (subagent briefs, project settings) is tracked;
+# settings.local.json and worktrees stay local.
 !.claude/agents/
+!.claude/settings.json
 .vscode/
 .idea/
 *.swp
