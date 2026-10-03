@@ -4,7 +4,9 @@
 .codex
 
 # Local IDE
-.claude/
+.claude/*
+# Subagent briefs are tooling worth keeping; settings.local.json and worktrees stay local.
+!.claude/agents/
 .vscode/
 .idea/
 *.swp
