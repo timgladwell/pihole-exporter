@@ -3,6 +3,8 @@ module github.com/timgladwell/pihole-exporter
 go 1.22
 
 require (
+	github.com/google/go-cmp v0.7.0
+	github.com/jarcoal/httpmock v1.4.2
 	go.opentelemetry.io/otel v1.27.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.27.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.27.0

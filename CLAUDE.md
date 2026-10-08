@@ -85,8 +85,21 @@ The exporter has three layers:
 
 ## Testing standards
 
-Tests use only the standard `testing` package — no test framework. Each package
-has its own `_test.go` files.
+Tests use the standard `testing` package, plus a small set of community-standard
+libraries where they earn their place. Each package has its own `_test.go` files.
+
+Prefer the library the Go maintainers themselves use or recommend, the way a Rails
+project prefers minitest over RSpec: it is what new contributors already read,
+and it will still be maintained. In practice:
+
+- **`testing`** is the test framework. No assertion library: `testify` is popular,
+  but the Go team's review guidance and Google's Go style guide both advise against
+  assertion helpers, because a hand-written failure message (`Value = 3, want 4`)
+  says more than a generic `assert.Equal`.
+- **`github.com/google/go-cmp/cmp`** for comparing structs, slices and maps, where
+  hand-written comparison gets long. `cmp.Diff` produces the failure message.
+- **`github.com/jarcoal/httpmock`** for mocking Pi-hole in-process — the Go
+  equivalent of `webmock`. See "Mocks validate; stubs supply a value".
 
 ### The layers
 
@@ -155,7 +168,7 @@ deleted. Payload assertions catch the ones that matter more: this exporter exist
 to move data from Pi-hole to Prometheus accurately, and it is useless if a value
 is corrupted, mislabelled or dropped in transit. Assert that the number Pi-hole
 reported is the number that comes out of `/metrics`, under the right name and
-labels. `internal/piholetest.Handler` cannot express any of this yet (#31).
+labels.
 
 - Request assertions cover method, path, headers (`X-FTL-SID`, `X-FTL-CSRF`,
   `User-Agent`, `Accept`) and the decoded body.
@@ -164,9 +177,34 @@ labels. `internal/piholetest.Handler` cannot express any of this yet (#31).
   fixtures cannot drift away from what Pi-hole actually returns (#39). A fixture
   that resembles the real API is what makes an upstream change show up as a test
   failure instead of a metric that quietly stops.
-- The mock Pi-hole is a shared utility for the whole harness — one implementation
-  in `internal/piholetest`, used by every layer — not a server hand-rolled per
-  test. That is what keeps the layers agreeing on what a Pi-hole is.
+- Fixtures are versioned by the **FTL** version they model (the API is served by
+  FTL, not Pi-hole core): `internal/piholetest/testdata/ftl-<version>/`, one JSON
+  file per endpoint path. A Pi-hole API change should mostly mean replacing those
+  files, not rewriting the mock. Multiple supported versions is #43.
+- Pi-hole test doubles live in `internal/piholetest` and nowhere else — not a
+  server hand-rolled per test. There are two, one per side of the harness
+  boundary, and both serve the same fixture files so they cannot disagree about
+  what Pi-hole returns:
+  - **`piholetest.New`** — the validating mock, built on `httpmock`, for tests
+    inside the harness. It replaces the `AuthClient`'s HTTP transport
+    (`pihole.WithHTTPClient(mock.Client())`), so requests never reach a network.
+    It is a scenario, not a simulated Pi-hole: each test declares the requests
+    it expects and the canned reply to each (`Expect`, or the `ExpectLogin` /
+    `ExpectStats` / `ExpectLogout` shorthands). A request matching no remaining
+    expectation fails the test, and so does an expectation unmet when the test
+    ends. Listed headers match key and value exactly; JSON bodies match on
+    decoded key/value pairs, types included; any other body matches byte for
+    byte. Order is enforced only where it matters, with `After` — logging in
+    before anything else, for example.
+  - A "wrong password" test configures the mock to *expect a well-formed login
+    and reply 401*; it tests how the exporter copes. Whether the configured
+    password is the one sent is a different test, asserting the request body.
+  - **`piholetest.Handler`** — a plain stub served over real HTTP, for the
+    deployable tests: the built binary and the container run as separate
+    processes, which an in-process transport mock cannot reach. Those tests
+    confirm packaging, so the stub validates nothing, and that is correct.
+  - `cmd/pihole-exporter`'s in-process tests use the stub too, until #28 lets a
+    test hand `buildServer` an HTTP client.
 
 ### Nothing is manual, and "too hard to test" is a design problem
 

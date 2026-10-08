@@ -1,0 +1,9 @@
+{
+  "domains": [
+    {"domain": "example.com", "count": 812},
+    {"domain": "example.net", "count": 377}
+  ],
+  "total_queries": 7497,
+  "blocked_queries": 3465,
+  "took": 0.000288
+}

@@ -8,64 +8,72 @@ pihole_exporter_build_info{pihole_api_version="6.0",version="dev"} 1
 pihole_exporter_scrape_success 1
 # HELP pihole_query_types_by_type Number of individual query types
 # TYPE pihole_query_types_by_type gauge
-pihole_query_types_by_type{type="A"} 1
+pihole_query_types_by_type{type="A"} 4101
+pihole_query_types_by_type{type="AAAA"} 2213
+pihole_query_types_by_type{type="HTTPS"} 1183
 # HELP pihole_summary_clients_active Number of active clients (seen in the last 24 hours)
 # TYPE pihole_summary_clients_active gauge
-pihole_summary_clients_active 1
+pihole_summary_clients_active 12
 # HELP pihole_summary_clients_total Total number of clients seen by FTL
 # TYPE pihole_summary_clients_total gauge
-pihole_summary_clients_total 1
+pihole_summary_clients_total 19
 # HELP pihole_summary_gravity_domains_being_blocked Number of domain on your Pi-hole's gravity list
 # TYPE pihole_summary_gravity_domains_being_blocked gauge
-pihole_summary_gravity_domains_being_blocked 1
+pihole_summary_gravity_domains_being_blocked 104523
 # HELP pihole_summary_gravity_last_update_timestamp_seconds Unix timestamp of last gravity update (may be `0` if unknown)
 # TYPE pihole_summary_gravity_last_update_timestamp_seconds gauge
-pihole_summary_gravity_last_update_timestamp_seconds 1
+pihole_summary_gravity_last_update_timestamp_seconds 1.7278e+09
 # HELP pihole_summary_queries_blocked Number of blocked queries
 # TYPE pihole_summary_queries_blocked gauge
-pihole_summary_queries_blocked 0
+pihole_summary_queries_blocked 3465
 # HELP pihole_summary_queries_by_reply Number of individual replies
 # TYPE pihole_summary_queries_by_reply gauge
-pihole_summary_queries_by_reply{reply="IP"} 1
+pihole_summary_queries_by_reply{reply="IP"} 3912
+pihole_summary_queries_by_reply{reply="NODATA"} 0
+pihole_summary_queries_by_reply{reply="NXDOMAIN"} 120
 # HELP pihole_summary_queries_by_status Number of individual queries (by status)
 # TYPE pihole_summary_queries_by_status gauge
-pihole_summary_queries_by_status{status="FORWARDED"} 1
+pihole_summary_queries_by_status{status="CACHE"} 26
+pihole_summary_queries_by_status{status="FORWARDED"} 4006
+pihole_summary_queries_by_status{status="GRAVITY"} 3465
 # HELP pihole_summary_queries_by_type Number of individual queries
 # TYPE pihole_summary_queries_by_type gauge
-pihole_summary_queries_by_type{type="A"} 1
+pihole_summary_queries_by_type{type="A"} 4101
+pihole_summary_queries_by_type{type="AAAA"} 2213
+pihole_summary_queries_by_type{type="HTTPS"} 1183
 # HELP pihole_summary_queries_cached Number of queries replied to from cache or local configuration
 # TYPE pihole_summary_queries_cached gauge
-pihole_summary_queries_cached 0
+pihole_summary_queries_cached 26
 # HELP pihole_summary_queries_forwarded Number of queries that have been forwarded upstream
 # TYPE pihole_summary_queries_forwarded gauge
-pihole_summary_queries_forwarded 1
+pihole_summary_queries_forwarded 4006
 # HELP pihole_summary_queries_frequency Average number of queries per second
 # TYPE pihole_summary_queries_frequency gauge
-pihole_summary_queries_frequency 1
+pihole_summary_queries_frequency 0
 # HELP pihole_summary_queries_percent_blocked Percent of blocked queries
 # TYPE pihole_summary_queries_percent_blocked gauge
-pihole_summary_queries_percent_blocked 0
+pihole_summary_queries_percent_blocked 46.218487
 # HELP pihole_summary_queries_total Total number of queries
 # TYPE pihole_summary_queries_total gauge
-pihole_summary_queries_total 1
+pihole_summary_queries_total 7497
 # HELP pihole_summary_queries_unique_domains Number of unique domains FTL knows
 # TYPE pihole_summary_queries_unique_domains gauge
-pihole_summary_queries_unique_domains 1
+pihole_summary_queries_unique_domains 445
 # HELP pihole_top_clients_blocked_queries Number of blocked queries
 # TYPE pihole_top_clients_blocked_queries gauge
-pihole_top_clients_blocked_queries 0
+pihole_top_clients_blocked_queries 3465
 # HELP pihole_top_clients_total_queries Total number of queries
 # TYPE pihole_top_clients_total_queries gauge
-pihole_top_clients_total_queries 1
+pihole_top_clients_total_queries 7497
 # HELP pihole_top_domains_blocked_queries Number of blocked queries
 # TYPE pihole_top_domains_blocked_queries gauge
-pihole_top_domains_blocked_queries 0
+pihole_top_domains_blocked_queries 3465
 # HELP pihole_top_domains_total_queries Total number of queries
 # TYPE pihole_top_domains_total_queries gauge
-pihole_top_domains_total_queries 1
+pihole_top_domains_total_queries 7497
 # HELP pihole_upstreams_forwarded_queries Number of forwarded queries
 # TYPE pihole_upstreams_forwarded_queries gauge
-pihole_upstreams_forwarded_queries 1
+pihole_upstreams_forwarded_queries 4006
 # HELP pihole_upstreams_total_queries Total number of queries
 # TYPE pihole_upstreams_total_queries gauge
-pihole_upstreams_total_queries 1
+pihole_upstreams_total_queries 7497

@@ -1,0 +1,10 @@
+{
+  "upstreams": [
+    {"ip": "blocklist", "name": "blocklist", "port": -1, "count": 3465, "statistics": {"response": 0, "variance": 0}},
+    {"ip": "cache", "name": "cache", "port": -1, "count": 26, "statistics": {"response": 0, "variance": 0}},
+    {"ip": "198.51.100.53", "name": "dns.example", "port": 53, "count": 4006, "statistics": {"response": 0.0123, "variance": 0.0041}}
+  ],
+  "forwarded_queries": 4006,
+  "total_queries": 7497,
+  "took": 0.000197
+}
