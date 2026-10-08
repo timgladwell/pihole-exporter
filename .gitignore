@@ -4,7 +4,11 @@
 .codex
 
 # Local IDE
-.claude/
+.claude/*
+# Shared Claude Code config (subagent briefs, project settings) is tracked;
+# settings.local.json and worktrees stay local.
+!.claude/agents/
+!.claude/settings.json
 .vscode/
 .idea/
 *.swp

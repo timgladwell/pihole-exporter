@@ -37,9 +37,31 @@ docker build -t pihole-exporter .
 ```
 
 **Tool requirements.** Go, plus `podman` or `docker` for the image layer, plus a
-coverage tool (#42). All of it is required locally — the same checks CI runs, run
+coverage tool (#42), plus `gopls` for Claude Code's code navigation. All of it is required locally — the same checks CI runs, run
 before pushing. A check that only ever runs in CI is a check nobody runs while
 the code is still cheap to change.
+
+## Working with Claude Code
+
+**Run checks through subagents.** Builds, tests, coverage and the container
+image check run in subagents on a low-cost model (Haiku), not in the main
+session. The briefs live in `.claude/agents/`:
+
+- `go-checks` — `gofmt`, build, vet, and `go test -race` (full, one package, or
+  one test), plus coverage.
+- `container-test` — the CI `image` job, run locally against Colima. Colima is
+  shared with other projects, so the brief only touches what it created.
+
+This keeps the main session's context for design and review, costs less, and
+lets checks run while other work continues. Treat a report as evidence to
+check, not a verdict: read the output it quotes, and confirm any claim about
+side effects yourself — the first `container-test` run reported a clean
+teardown while its stub was still listening.
+
+**Code navigation uses gopls.** `.claude/settings.json` enables the
+`gopls-lsp` plugin, which gives Claude go-to-definition, find-references and
+diagnostics rather than grep. It needs `gopls` on `PATH`:
+`go install golang.org/x/tools/gopls@latest`.
 
 ## Architecture
 
