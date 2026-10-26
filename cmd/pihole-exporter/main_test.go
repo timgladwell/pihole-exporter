@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/timgladwell/pihole-exporter/internal/piholetest"
 	"github.com/timgladwell/pihole-exporter/pkg/pihole"
@@ -334,6 +337,88 @@ func TestShutdownReleasesPiholeSession(t *testing.T) {
 
 	if len(deleted) != 1 || deleted[0] != "sid-1" {
 		t.Fatalf("deleted sessions = %v, want [sid-1]", deleted)
+	}
+}
+
+func TestRunRejectsMissingPiholeURL(t *testing.T) {
+	t.Setenv("PIHOLE_BASE_URL", "")
+
+	assertUsageFlag(t, run(context.Background(), []string{"-password", "x"}, nil), "pihole-url")
+}
+
+func TestRunRejectsMissingPassword(t *testing.T) {
+	t.Setenv(pihole.DefaultAppPasswordEnv, "")
+
+	assertUsageFlag(t, run(context.Background(), []string{"-pihole-url", "http://127.0.0.1:1"}, nil), "password")
+}
+
+func TestRunRejectsUnsupportedMetricsExporter(t *testing.T) {
+	args := []string{"-pihole-url", "http://127.0.0.1:1", "-password", "x", "-metrics-exporter", "bogus"}
+
+	assertUsageFlag(t, run(context.Background(), args, nil), "metrics-exporter")
+}
+
+func TestRunRejectsUnparseablePiholeURL(t *testing.T) {
+	err := run(context.Background(), []string{"-pihole-url", "pi.hole", "-password", "x"}, nil)
+
+	// A runtime config error from pihole.NewAuthClient, not a usage error; a typed error for it is #40.
+	var usage *usageError
+	if err == nil || errors.As(err, &usage) {
+		t.Fatalf("run() error = %v, want a non-usage error", err)
+	}
+}
+
+func TestRunHealthcheckFailsWhenNothingIsListening(t *testing.T) {
+	if err := run(context.Background(), []string{"-healthcheck", "-listen", freeAddr(t)}, nil); err == nil {
+		t.Fatal("run() error = nil, want error when nothing is listening")
+	}
+}
+
+// TestRunReleasesPiholeSessionWhenCancelled drives the shutdown path in
+// process: cancelling the context must stop the server, then log out. The
+// mock fails the test if the DELETE never arrives.
+func TestRunReleasesPiholeSessionWhenCancelled(t *testing.T) {
+	mock := piholetest.New(t)
+	login := mock.ExpectLogin("app-password").Header("User-Agent", userAgent())
+	for _, path := range piholetest.StatsPaths() {
+		mock.ExpectStats(path, "sid-1", "csrf-1").Header("User-Agent", userAgent()).After(login)
+	}
+	mock.ExpectLogout("sid-1", "csrf-1").Header("User-Agent", userAgent()).After(login)
+
+	addr := freeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- run(ctx, []string{"-listen", addr, "-pihole-url", piholetest.BaseURL, "-password", "app-password"}, mock.Client())
+	}()
+
+	base := "http://" + addr
+	waitForHealthz(t, base)
+	if got := getStatus(t, base+"/metrics"); got != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want %d", got, http.StatusOK)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run() error = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run() did not return within 5s of cancellation")
+	}
+}
+
+func assertUsageFlag(t *testing.T, err error, flagName string) {
+	t.Helper()
+
+	var usage *usageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("run() error = %v, want *usageError", err)
+	}
+	if usage.Flag != flagName {
+		t.Fatalf("usageError.Flag = %q, want %q", usage.Flag, flagName)
 	}
 }
 
