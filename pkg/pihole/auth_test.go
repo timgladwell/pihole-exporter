@@ -2,157 +2,113 @@ package pihole
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/timgladwell/pihole-exporter/internal/piholetest"
 )
+
+// newMockedClient returns an AuthClient wired to a fresh validating mock. The
+// returned clock pointer drives the client's injected clock.
+func newMockedClient(t *testing.T, opts ...AuthClientOption) (*AuthClient, *piholetest.Mock, *time.Time) {
+	t.Helper()
+
+	mock := piholetest.New(t)
+	now := time.Unix(1000, 0)
+	opts = append([]AuthClientOption{WithHTTPClient(mock.Client())}, opts...)
+	client, err := NewAuthClient(piholetest.BaseURL, "app-password", opts...)
+	if err != nil {
+		t.Fatalf("NewAuthClient() error = %v", err)
+	}
+	client.now = func() time.Time { return now }
+	return client, mock, &now
+}
+
+func mustSession(t *testing.T, client *AuthClient) Session {
+	t.Helper()
+
+	session, err := client.Session(context.Background())
+	if err != nil {
+		t.Fatalf("Session() error = %v", err)
+	}
+	return session
+}
 
 func TestSessionAuthenticatesAndCachesToken(t *testing.T) {
 	t.Parallel()
 
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		assertAuthRequest(t, r)
-		writeAuthResponse(t, w, "sid-1", "csrf-1", 300)
-	}))
-	defer server.Close()
+	client, mock, _ := newMockedClient(t)
+	mock.ExpectLogin("app-password")
 
-	client, err := NewAuthClient(server.URL, "app-password")
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
-	client.now = fixedClock(time.Unix(1000, 0))
-
-	first, err := client.Session(context.Background())
-	if err != nil {
-		t.Fatalf("Session() error = %v", err)
-	}
-	second, err := client.Session(context.Background())
-	if err != nil {
-		t.Fatalf("Session() second call error = %v", err)
-	}
+	first := mustSession(t, client)
+	second := mustSession(t, client)
 
 	if first.SID != "sid-1" || second.SID != "sid-1" {
 		t.Fatalf("unexpected SID values: first=%q second=%q", first.SID, second.SID)
-	}
-	if requests != 1 {
-		t.Fatalf("expected one auth request, got %d", requests)
 	}
 }
 
 func TestSessionRefreshesWhenTokenIsNearExpiry(t *testing.T) {
 	t.Parallel()
 
-	requests := 0
-	var deleted []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			deleted = append(deleted, r.Header.Get("X-FTL-SID"))
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		requests++
-		assertAuthRequest(t, r)
-		writeAuthResponse(t, w, "sid-"+string(rune('0'+requests)), "csrf", 60)
-	}))
-	defer server.Close()
+	client, mock, now := newMockedClient(t, WithRefreshSkew(30*time.Second))
+	login1 := mock.ExpectLogin("app-password")
+	logout := mock.ExpectLogout("sid-1", "csrf-1").After(login1)
+	mock.ExpectLogin("app-password").After(logout).Reply(http.StatusOK, piholetest.Session("sid-2", "csrf-2"))
 
-	now := time.Unix(1000, 0)
-	client, err := NewAuthClient(server.URL, "app-password", WithRefreshSkew(30*time.Second))
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
-	client.now = func() time.Time { return now }
+	first := mustSession(t, client)
+	*now = now.Add(1771 * time.Second)
+	second := mustSession(t, client)
 
-	first, err := client.Session(context.Background())
-	if err != nil {
-		t.Fatalf("Session() error = %v", err)
-	}
-
-	now = now.Add(31 * time.Second)
-
-	second, err := client.Session(context.Background())
-	if err != nil {
-		t.Fatalf("Session() refresh error = %v", err)
-	}
-
-	if first.SID == second.SID {
-		t.Fatalf("expected refreshed SID, got %q twice", first.SID)
-	}
-	if requests != 2 {
-		t.Fatalf("expected two auth requests, got %d", requests)
-	}
-	if len(deleted) != 1 || deleted[0] != first.SID {
-		t.Fatalf("deleted sessions = %v, want [%s]", deleted, first.SID)
+	if first.SID != "sid-1" || second.SID != "sid-2" {
+		t.Fatalf("SIDs = %q then %q, want sid-1 then sid-2", first.SID, second.SID)
 	}
 }
 
 func TestLogoutDeletesSession(t *testing.T) {
 	t.Parallel()
 
-	var method, sid, csrf string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			method, sid, csrf = r.Method, r.Header.Get("X-FTL-SID"), r.Header.Get("X-FTL-CSRF")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		writeAuthResponse(t, w, "sid-1", "csrf-1", 300)
-	}))
-	defer server.Close()
+	client, mock, _ := newMockedClient(t)
+	login := mock.ExpectLogin("app-password")
+	mock.ExpectLogout("sid-1", "csrf-1").After(login)
 
-	client, err := NewAuthClient(server.URL, "app-password")
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
+	mustSession(t, client)
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatalf("Logout() error = %v", err)
 	}
-	client.now = fixedClock(time.Unix(1000, 0))
+}
 
-	if _, err := client.Session(context.Background()); err != nil {
-		t.Fatalf("Session() error = %v", err)
-	}
+func TestSessionAuthenticatesAgainAfterLogout(t *testing.T) {
+	t.Parallel()
+
+	client, mock, _ := newMockedClient(t)
+	login1 := mock.ExpectLogin("app-password")
+	logout := mock.ExpectLogout("sid-1", "csrf-1").After(login1)
+	mock.ExpectLogin("app-password").After(logout).Reply(http.StatusOK, piholetest.Session("sid-2", "csrf-2"))
+
+	mustSession(t, client)
 	if err := client.Logout(context.Background()); err != nil {
 		t.Fatalf("Logout() error = %v", err)
 	}
 
-	if method != http.MethodDelete {
-		t.Fatalf("method = %q, want DELETE", method)
-	}
-	if sid != "sid-1" || csrf != "csrf-1" {
-		t.Fatalf("headers sid=%q csrf=%q, want sid-1/csrf-1", sid, csrf)
-	}
-	if client.session.Valid {
-		t.Fatal("session still valid after Logout()")
+	if got := mustSession(t, client).SID; got != "sid-2" {
+		t.Fatalf("SID = %q, want sid-2", got)
 	}
 }
 
 func TestUserAgentIsSentOnEveryRequest(t *testing.T) {
 	t.Parallel()
 
-	agents := map[string]string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agents[r.Method+" "+r.URL.Path] = r.Header.Get("User-Agent")
-		switch {
-		case r.Method == http.MethodDelete:
-			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/api/auth":
-			writeAuthResponse(t, w, "sid-1", "csrf-1", 300)
-		default:
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{}`))
-		}
-	}))
-	defer server.Close()
-
-	client, err := NewAuthClient(server.URL, "app-password", WithUserAgent("pihole-exporter/v1.2.3"))
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
-	client.now = fixedClock(time.Unix(1000, 0))
+	const agent = "pihole-exporter/v1.2.3"
+	client, mock, _ := newMockedClient(t, WithUserAgent(agent))
+	mock.ExpectLogin("app-password").Header("User-Agent", agent)
+	mock.ExpectStats("/api/stats/summary", "sid-1", "csrf-1").Header("User-Agent", agent)
+	mock.ExpectLogout("sid-1", "csrf-1").Header("User-Agent", agent)
 
 	if _, err := client.GetJSONMap(context.Background(), "/stats/summary"); err != nil {
 		t.Fatalf("GetJSONMap() error = %v", err)
@@ -160,132 +116,62 @@ func TestUserAgentIsSentOnEveryRequest(t *testing.T) {
 	if err := client.Logout(context.Background()); err != nil {
 		t.Fatalf("Logout() error = %v", err)
 	}
-
-	for _, request := range []string{"POST /api/auth", "GET /api/stats/summary", "DELETE /api/auth"} {
-		if got := agents[request]; got != "pihole-exporter/v1.2.3" {
-			t.Fatalf("User-Agent on %s = %q, want pihole-exporter/v1.2.3", request, got)
-		}
-	}
 }
 
 func TestUserAgentDefaultsToTheApplicationName(t *testing.T) {
 	t.Parallel()
 
-	client, err := NewAuthClient("http://127.0.0.1:8080", "app-password", WithUserAgent("  "))
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
-	if client.userAgent != defaultUserAgent {
-		t.Fatalf("userAgent = %q, want %q", client.userAgent, defaultUserAgent)
-	}
+	client, mock, _ := newMockedClient(t, WithUserAgent("  "))
+	mock.ExpectLogin("app-password")
+
+	mustSession(t, client)
 }
 
 func TestLogoutWithoutSessionMakesNoRequest(t *testing.T) {
 	t.Parallel()
 
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	client, err := NewAuthClient(server.URL, "app-password")
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
+	client, _, _ := newMockedClient(t)
 
 	if err := client.Logout(context.Background()); err != nil {
 		t.Fatalf("Logout() error = %v", err)
-	}
-	if requests != 0 {
-		t.Fatalf("expected no requests, got %d", requests)
 	}
 }
 
 func TestFailedLogoutDoesNotBlockReauth(t *testing.T) {
 	t.Parallel()
 
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		requests++
-		writeAuthResponse(t, w, "sid-"+string(rune('0'+requests)), "csrf", 60)
-	}))
-	defer server.Close()
+	client, mock, now := newMockedClient(t, WithRefreshSkew(30*time.Second))
+	login1 := mock.ExpectLogin("app-password")
+	logout := mock.ExpectLogout("sid-1", "csrf-1").After(login1).Reply(http.StatusInternalServerError, nil)
+	mock.ExpectLogin("app-password").After(logout).Reply(http.StatusOK, piholetest.Session("sid-2", "csrf-2"))
 
-	now := time.Unix(1000, 0)
-	client, err := NewAuthClient(server.URL, "app-password", WithRefreshSkew(30*time.Second))
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
-	client.now = func() time.Time { return now }
+	mustSession(t, client)
+	*now = now.Add(1771 * time.Second)
 
-	if _, err := client.Session(context.Background()); err != nil {
-		t.Fatalf("Session() error = %v", err)
-	}
-
-	now = now.Add(31 * time.Second)
-
-	second, err := client.Session(context.Background())
-	if err != nil {
-		t.Fatalf("Session() refresh error = %v", err)
-	}
-	if second.SID != "sid-2" {
-		t.Fatalf("SID = %q, want sid-2", second.SID)
+	if got := mustSession(t, client).SID; got != "sid-2" {
+		t.Fatalf("SID = %q, want sid-2", got)
 	}
 }
 
 func TestLogoutSkipsExpiredSession(t *testing.T) {
 	t.Parallel()
 
-	deletes := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			deletes++
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		writeAuthResponse(t, w, "sid-1", "csrf-1", 60)
-	}))
-	defer server.Close()
+	client, mock, now := newMockedClient(t)
+	mock.ExpectLogin("app-password")
 
-	now := time.Unix(1000, 0)
-	client, err := NewAuthClient(server.URL, "app-password")
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
-	client.now = func() time.Time { return now }
-
-	if _, err := client.Session(context.Background()); err != nil {
-		t.Fatalf("Session() error = %v", err)
-	}
-
-	now = now.Add(61 * time.Second)
+	mustSession(t, client)
+	*now = now.Add(1801 * time.Second)
 
 	if err := client.Logout(context.Background()); err != nil {
 		t.Fatalf("Logout() error = %v", err)
-	}
-	if deletes != 0 {
-		t.Fatalf("expected no DELETE for an expired session, got %d", deletes)
 	}
 }
 
 func TestAddAuthHeaders(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeAuthResponse(t, w, "sid-1", "csrf-1", 300)
-	}))
-	defer server.Close()
-
-	client, err := NewAuthClient(server.URL, "app-password")
-	if err != nil {
-		t.Fatalf("NewAuthClient() error = %v", err)
-	}
+	client, mock, _ := newMockedClient(t)
+	mock.ExpectLogin("app-password")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/summary", nil)
 	if err := client.AddAuthHeaders(context.Background(), req); err != nil {
@@ -303,20 +189,21 @@ func TestAddAuthHeaders(t *testing.T) {
 func TestNewAuthClientFromEnv(t *testing.T) {
 	t.Setenv(DefaultAppPasswordEnv, "from-env")
 
-	client, err := NewAuthClientFromEnv("http://127.0.0.1:8080")
+	mock := piholetest.New(t)
+	mock.ExpectLogin("from-env")
+	client, err := NewAuthClientFromEnv(piholetest.BaseURL, WithHTTPClient(mock.Client()))
 	if err != nil {
 		t.Fatalf("NewAuthClientFromEnv() error = %v", err)
 	}
-	if client.password != "from-env" {
-		t.Fatalf("password = %q, want from-env", client.password)
-	}
+
+	mustSession(t, client)
 }
 
 func TestNewAuthClientRequiresPassword(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewAuthClient("http://127.0.0.1:8080", "")
-	if err != ErrMissingPassword {
+	if !errors.Is(err, ErrMissingPassword) {
 		t.Fatalf("NewAuthClient() error = %v, want ErrMissingPassword", err)
 	}
 }
@@ -324,25 +211,14 @@ func TestNewAuthClientRequiresPassword(t *testing.T) {
 func TestSessionReturnsAPIErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{
-				"key":     "unauthorized",
-				"message": "Unauthorized",
-				"hint":    nil,
-			},
-		})
-	}))
-	defer server.Close()
-
-	client, err := NewAuthClient(server.URL, "bad-password")
+	mock := piholetest.New(t)
+	mock.ExpectLogin("bad-password").Reply(http.StatusUnauthorized, piholetest.Unauthorized())
+	client, err := NewAuthClient(piholetest.BaseURL, "bad-password", WithHTTPClient(mock.Client()))
 	if err != nil {
 		t.Fatalf("NewAuthClient() error = %v", err)
 	}
 
-	_, err = client.Session(context.Background())
-	if err == nil {
+	if _, err := client.Session(context.Background()); err == nil {
 		t.Fatal("Session() error = nil, want error")
 	}
 }
@@ -366,50 +242,6 @@ func TestLiveAuth(t *testing.T) {
 	}
 	if session.SID == "" {
 		t.Fatal("Session().SID is empty")
-	}
-}
-
-func assertAuthRequest(t *testing.T, r *http.Request) {
-	t.Helper()
-
-	if r.Method != http.MethodPost {
-		t.Fatalf("method = %s, want POST", r.Method)
-	}
-	if r.URL.Path != "/api/auth" {
-		t.Fatalf("path = %s, want /api/auth", r.URL.Path)
-	}
-
-	var body authRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		t.Fatalf("decode auth request body: %v", err)
-	}
-	if body.Password != "app-password" {
-		t.Fatalf("password = %q, want app-password", body.Password)
-	}
-}
-
-func writeAuthResponse(t *testing.T, w http.ResponseWriter, sid, csrf string, validity int) {
-	t.Helper()
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(map[string]any{
-		"session": map[string]any{
-			"valid":    true,
-			"totp":     false,
-			"sid":      sid,
-			"csrf":     csrf,
-			"validity": validity,
-		},
-		"took": 0.0002,
-	})
-	if err != nil {
-		t.Fatalf("write response: %v", err)
-	}
-}
-
-func fixedClock(t time.Time) func() time.Time {
-	return func() time.Time {
-		return t
 	}
 }
 
