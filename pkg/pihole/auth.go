@@ -157,10 +157,16 @@ func (c *AuthClient) AddAuthHeaders(ctx context.Context, req *http.Request) erro
 	return nil
 }
 
-func (c *AuthClient) Invalidate() {
+// Invalidate drops the cached session if it is still sid, so the next
+// Session() authenticates afresh. It does not DELETE the session: Pi-hole
+// has already rejected it. Naming the SID keeps a request that failed on a
+// stale session from discarding the fresh one a concurrent request just made.
+func (c *AuthClient) Invalidate(sid string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.session = Session{}
+	if c.session.SID == sid {
+		c.session = Session{}
+	}
 }
 
 // Logout deletes the current session via DELETE /api/auth, releasing the
