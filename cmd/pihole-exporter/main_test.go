@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,9 +20,14 @@ func TestHealthzEndpoint(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	server, shutdown := buildServer()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	server, shutdown, err := buildServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildServer() error = %v", err)
+	}
 	t.Cleanup(shutdown)
 	testExporter := httptest.NewServer(server.Handler)
 	defer testExporter.Close()
@@ -57,9 +61,14 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	server, shutdown := buildServer()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	server, shutdown, err := buildServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildServer() error = %v", err)
+	}
 	t.Cleanup(shutdown)
 	testExporter := httptest.NewServer(server.Handler)
 	defer testExporter.Close()
@@ -110,9 +119,10 @@ func TestParseConfigUnsetsPasswordEnvByDefault(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", "http://127.0.0.1:8080")
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	cfg := parseConfig()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
 
 	if cfg.password != "app-password" {
 		t.Fatalf("password = %q, want app-password", cfg.password)
@@ -126,9 +136,10 @@ func TestParseConfigDefaultsToPrometheusMetricsExporter(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", "http://127.0.0.1:8080")
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	cfg := parseConfig()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
 
 	if cfg.metricsExporter != metricsExporterPrometheus {
 		t.Fatalf("metricsExporter = %q, want %q", cfg.metricsExporter, metricsExporterPrometheus)
@@ -140,29 +151,14 @@ func TestParseConfigReadsOpenTelemetryMetricsExporterEnv(t *testing.T) {
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 	t.Setenv("OTEL_METRICS_EXPORTER", " OTLPHTTP ")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	cfg := parseConfig()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
 
 	if cfg.metricsExporter != metricsExporterOTLPHTTP {
 		t.Fatalf("metricsExporter = %q, want %q", cfg.metricsExporter, metricsExporterOTLPHTTP)
 	}
-}
-
-func withTestCommandLine(t *testing.T, args ...string) {
-	t.Helper()
-
-	oldArgs := os.Args
-	oldCommandLine := flag.CommandLine
-
-	os.Args = args
-	flag.CommandLine = flag.NewFlagSet(args[0], flag.ContinueOnError)
-	flag.CommandLine.SetOutput(io.Discard)
-
-	t.Cleanup(func() {
-		os.Args = oldArgs
-		flag.CommandLine = oldCommandLine
-	})
 }
 
 func TestHealthCheckURLUsesLoopbackForWildcardBind(t *testing.T) {
@@ -207,9 +203,14 @@ func TestAliveEndpoint(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	server, shutdown := buildServer()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	server, shutdown, err := buildServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildServer() error = %v", err)
+	}
 	t.Cleanup(shutdown)
 	testExporter := httptest.NewServer(server.Handler)
 	defer testExporter.Close()
@@ -231,9 +232,14 @@ func TestReadinessProbeFailsUntilFirstScrapeSucceeds(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	server, shutdown := buildServer()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	server, shutdown, err := buildServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildServer() error = %v", err)
+	}
 	t.Cleanup(shutdown)
 	testExporter := httptest.NewServer(server.Handler)
 	defer testExporter.Close()
@@ -265,9 +271,14 @@ func TestScrapeIdentifiesTheExporter(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	server, shutdown := buildServer()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	server, shutdown, err := buildServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildServer() error = %v", err)
+	}
 	t.Cleanup(shutdown)
 	testExporter := httptest.NewServer(server.Handler)
 	defer testExporter.Close()
@@ -303,9 +314,14 @@ func TestShutdownReleasesPiholeSession(t *testing.T) {
 	t.Setenv("PIHOLE_BASE_URL", stubPiholeServer.URL)
 	t.Setenv(pihole.DefaultAppPasswordEnv, "app-password")
 
-	withTestCommandLine(t, "pihole-exporter")
-
-	server, shutdown := buildServer()
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	server, shutdown, err := buildServer(cfg, nil)
+	if err != nil {
+		t.Fatalf("buildServer() error = %v", err)
+	}
 	testExporter := httptest.NewServer(server.Handler)
 	defer testExporter.Close()
 
