@@ -208,3 +208,44 @@ func piholeSeries(families []*dto.MetricFamily) map[string]float64 {
 	}
 	return series
 }
+
+// firstStatsPath is the first endpoint CollectMetrics requests (sorted order).
+func firstStatsPath() string { return piholetest.StatsPaths()[0] }
+
+func TestCollectorRecoversWhenPiholeDropsTheSession(t *testing.T) {
+	t.Parallel()
+	collector, mock := newMockedCollector(t)
+	expectScrapes(mock, 1)
+	gather(t, collector)
+
+	// Declared only after scrape 1 so its requests cannot satisfy these.
+	rejected := mock.ExpectStats(firstStatsPath(), "sid-1", "csrf-1").
+		Reply(http.StatusUnauthorized, piholetest.Unauthorized())
+	login2 := mock.ExpectLogin(password).After(rejected).
+		Reply(http.StatusOK, piholetest.Session("sid-2", "csrf-2"))
+	mock.ExpectScrape(login2, "sid-2", "csrf-2", 1)
+
+	families := gather(t, collector)
+	if got := metricValue(t, families, "pihole_exporter_scrape_success"); got != 1 {
+		t.Fatalf("pihole_exporter_scrape_success = %v, want 1", got)
+	}
+}
+
+func TestCollectorReportsFailureWhenSessionIsRejectedTwice(t *testing.T) {
+	t.Parallel()
+	collector, mock := newMockedCollector(t)
+	login1 := mock.ExpectLogin(password)
+	rejected := mock.ExpectStats(firstStatsPath(), "sid-1", "csrf-1").After(login1).
+		Reply(http.StatusUnauthorized, piholetest.Unauthorized())
+	login2 := mock.ExpectLogin(password).After(rejected).
+		Reply(http.StatusOK, piholetest.Session("sid-2", "csrf-2"))
+	mock.ExpectStats(firstStatsPath(), "sid-2", "csrf-2").After(login2).
+		Reply(http.StatusUnauthorized, piholetest.Unauthorized())
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+	families, _ := registry.Gather()
+	if got := metricValue(t, families, "pihole_exporter_scrape_success"); got != 0 {
+		t.Fatalf("pihole_exporter_scrape_success = %v, want 0", got)
+	}
+}
