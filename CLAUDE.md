@@ -58,6 +58,34 @@ check, not a verdict: read the output it quotes, and confirm any claim about
 side effects yourself — the first `container-test` run reported a clean
 teardown while its stub was still listening.
 
+**One issue per session, implemented by a worker.** Each session takes one
+issue to one pull request targeting `main` (#49 has the trial this came from):
+
+1. **Settle the design first.** Read the code and write a brief for the
+   `implementer` agent (Sonnet) that leaves no design decision open: files,
+   signatures, each test by name and what it asserts, and what done means.
+   The agent file holds the shared rules, so the brief holds only what is
+   specific to the issue. An issue needing real design work gets that
+   design posted on the issue for review before any brief.
+2. **Create the worktree yourself**, with a name a person can read, and hand
+   the worker its path:
+   `git worktree add .claude/worktrees/<issue>-<slug> -b <branch> main`.
+   The Agent tool's `isolation: "worktree"` names worktrees and branches
+   after the agent id, which means nothing to the person reviewing.
+3. **Verify before a pull request opens.** Run the `go-checks` gate, read
+   the production diff in full and the tests' names and assertions, and check
+   the worker's mutation-check evidence. Failures go back to the same worker,
+   which keeps its context. After two fix rounds, stop and write up the
+   blocker on the issue rather than taking over.
+4. **Do not stack pull requests.** Commits are re-signed with a hardware key
+   before merge, which rewrites their SHAs, so every stacked child would need
+   rebasing, re-signing and retargeting. Work that depends on an open pull
+   request waits until it is merged.
+
+A second concurrent session is worth it only for issues in separate parts of
+the repo. The user decides that, not an orchestrating session: changes here
+tend to be cross-cutting.
+
 **Code navigation uses gopls.** `.claude/settings.json` enables the
 `gopls-lsp` plugin, which gives Claude go-to-definition, find-references and
 diagnostics rather than grep. It needs `gopls` on `PATH`:
