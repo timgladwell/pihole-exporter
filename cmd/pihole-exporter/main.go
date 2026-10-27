@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -28,35 +29,74 @@ const (
 )
 
 func main() {
-	server, shutdown := buildServer()
-	defer shutdown()
-
-	// SIGTERM is how Kubernetes and Docker stop the process; shutting down
-	// cleanly is what gets the Pi-hole session released rather than left to
-	// occupy an API seat until its TTL expires.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	err := run(ctx, os.Args[1:], nil)
+	stop()
 
-	go func() {
-		<-ctx.Done()
-		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := server.Shutdown(stopCtx); err != nil {
-			log.Printf("shutdown HTTP server: %v", err)
-		}
-	}()
-
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("serve: %v", err)
+	var usage *usageError
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		os.Exit(0)
+	case errors.As(err, &usage):
+		os.Exit(2) // usage text already printed by parseConfig
+	case err != nil:
+		log.Fatal(err)
 	}
 }
 
-func buildServer() (*http.Server, func()) {
-	cfg := parseConfig()
-
-	client, err := pihole.NewAuthClient(cfg.piHoleURL, cfg.password, pihole.WithUserAgent(userAgent()))
+// run is everything main does short of exiting. piholeHTTP is the client the
+// Pi-hole AuthClient uses; nil means the default. It exists so in-process
+// tests can hand the AuthClient the piholetest mock.
+//
+// SIGTERM is how Kubernetes and Docker stop the process; cancelling ctx shuts
+// down cleanly, which is what gets the Pi-hole session released rather than
+// left to occupy an API seat until its TTL expires.
+func run(ctx context.Context, args []string, piholeHTTP *http.Client) error {
+	cfg, err := parseConfig(args)
 	if err != nil {
-		log.Fatalf("create Pi-hole client: %v", err)
+		return err
+	}
+	if cfg.healthCheck {
+		if err := probeHealth(cfg.listenAddr); err != nil {
+			return fmt.Errorf("healthcheck: %w", err)
+		}
+		return nil
+	}
+
+	server, shutdown, err := buildServer(cfg, piholeHTTP)
+	if err != nil {
+		return err
+	}
+	defer shutdown()
+
+	served := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-ctx.Done():
+			stopCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cancel()
+			if err := server.Shutdown(stopCtx); err != nil {
+				log.Printf("shutdown HTTP server: %v", err)
+			}
+		case <-served:
+		}
+	}()
+
+	err = server.ListenAndServe()
+	close(served)
+	<-stopped // let Shutdown finish draining before the session is released
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
+	}
+	return nil
+}
+
+func buildServer(cfg config, piholeHTTP *http.Client) (*http.Server, func(), error) {
+	client, err := pihole.NewAuthClient(cfg.piHoleURL, cfg.password, pihole.WithUserAgent(userAgent()), pihole.WithHTTPClient(piholeHTTP))
+	if err != nil {
+		return nil, nil, fmt.Errorf("create Pi-hole client: %w", err)
 	}
 
 	mux := http.NewServeMux()
@@ -88,7 +128,7 @@ func buildServer() (*http.Server, func()) {
 	case metricsExporterOTLP, metricsExporterOTLPGRPC, metricsExporterOTLPHTTP, metricsExporterStdout:
 		provider, err := exporter.NewOpenTelemetryMeterProvider(context.Background(), client, cfg.timeout, string(cfg.metricsExporter))
 		if err != nil {
-			log.Fatalf("create %s metrics exporter: %v", cfg.metricsExporter, err)
+			return nil, nil, fmt.Errorf("create %s metrics exporter: %w", cfg.metricsExporter, err)
 		}
 		releaseSession := shutdown
 		shutdown = func() {
@@ -100,7 +140,7 @@ func buildServer() (*http.Server, func()) {
 			releaseSession()
 		}
 	default:
-		log.Fatalf("unsupported metrics exporter %q", cfg.metricsExporter)
+		return nil, nil, fmt.Errorf("unsupported metrics exporter %q", cfg.metricsExporter)
 	}
 
 	log.Printf("pihole-exporter %s listening on %s, metrics exporter %s, compiled for Pi-hole API %s", exporter.Version, cfg.listenAddr, cfg.metricsExporter, pihole.CompiledPiHoleAPIVersion)
@@ -109,7 +149,7 @@ func buildServer() (*http.Server, func()) {
 		Addr:              cfg.listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
-	}, shutdown
+	}, shutdown, nil
 }
 
 type config struct {
@@ -118,29 +158,46 @@ type config struct {
 	password        string
 	timeout         time.Duration
 	metricsExporter metricsExporter
+	healthCheck     bool
 }
 
-func parseConfig() config {
-	listenAddr := flag.String("listen", envOrDefault("LISTEN_ADDR", defaultListenAddr), "HTTP listen address")
-	piHoleURL := flag.String("pihole-url", envOrDefault("PIHOLE_BASE_URL", ""), "Pi-hole base URL e.g. http://pi.hole:8080")
-	password := flag.String("password", envOrDefault(pihole.DefaultAppPasswordEnv, ""), "Pi-hole app password generated in Pi-hole settings")
-	timeout := flag.Duration("timeout", durationEnvOrDefault("SCRAPE_TIMEOUT", defaultTimeout), "Pi-hole scrape timeout")
-	metricsExporterValue := flag.String("metrics-exporter", envOrDefault("OTEL_METRICS_EXPORTER", defaultMetricsExporter), "metrics exporter: prometheus, otlp, otlpgrpc, otlphttp, or stdout")
-	healthCheck := flag.Bool("healthcheck", false, "probe /healthz on the listen address and exit; the container HEALTHCHECK uses this because the image has no shell")
-	flag.Parse()
+// usageError is a configuration mistake the operator must fix; main exits 2.
+type usageError struct {
+	Flag string // the flag at fault: "pihole-url", "password", "metrics-exporter"; "" for a parse error
+	Err  error
+}
+
+func (e *usageError) Error() string { return e.Err.Error() }
+func (e *usageError) Unwrap() error { return e.Err }
+
+func parseConfig(args []string) (config, error) {
+	fs := flag.NewFlagSet("pihole-exporter", flag.ContinueOnError)
+	listenAddr := fs.String("listen", envOrDefault("LISTEN_ADDR", defaultListenAddr), "HTTP listen address")
+	piHoleURL := fs.String("pihole-url", envOrDefault("PIHOLE_BASE_URL", ""), "Pi-hole base URL e.g. http://pi.hole:8080")
+	password := fs.String("password", envOrDefault(pihole.DefaultAppPasswordEnv, ""), "Pi-hole app password generated in Pi-hole settings")
+	timeout := fs.Duration("timeout", durationEnvOrDefault("SCRAPE_TIMEOUT", defaultTimeout), "Pi-hole scrape timeout")
+	metricsExporterValue := fs.String("metrics-exporter", envOrDefault("OTEL_METRICS_EXPORTER", defaultMetricsExporter), "metrics exporter: prometheus, otlp, otlpgrpc, otlphttp, or stdout")
+	healthCheck := fs.Bool("healthcheck", false, "probe /healthz on the listen address and exit; the container HEALTHCHECK uses this because the image has no shell")
+	if err := fs.Parse(args); err != nil {
+		// The flag package has already printed the problem and usage.
+		return config{}, &usageError{Err: err}
+	}
 
 	if *healthCheck {
-		if err := probeHealth(*listenAddr); err != nil {
-			log.Fatalf("healthcheck: %v", err)
-		}
-		os.Exit(0)
+		return config{listenAddr: *listenAddr, healthCheck: true}, nil
+	}
+
+	usage := func(flagName string, err error) (config, error) {
+		_, _ = fmt.Fprintf(fs.Output(), "%v\n\n", err)
+		fs.Usage()
+		return config{}, &usageError{Flag: flagName, Err: err}
 	}
 
 	if *piHoleURL == "" {
-		fatalUsage("PIHOLE_BASE_URL or -pihole-url is required")
+		return usage("pihole-url", errors.New("PIHOLE_BASE_URL or -pihole-url is required"))
 	}
 	if *password == "" {
-		fatalUsage("%s or -password is required", pihole.DefaultAppPasswordEnv)
+		return usage("password", fmt.Errorf("%s or -password is required", pihole.DefaultAppPasswordEnv))
 	}
 	if err := os.Unsetenv(pihole.DefaultAppPasswordEnv); err != nil {
 		log.Printf("failed to unset %s: %v", pihole.DefaultAppPasswordEnv, err)
@@ -148,7 +205,7 @@ func parseConfig() config {
 
 	metricsExporter, err := parseMetricsExporter(*metricsExporterValue)
 	if err != nil {
-		fatalUsage("%v", err)
+		return usage("metrics-exporter", err)
 	}
 
 	return config{
@@ -157,7 +214,7 @@ func parseConfig() config {
 		password:        *password,
 		timeout:         *timeout,
 		metricsExporter: metricsExporter,
-	}
+	}, nil
 }
 
 type metricsExporter string
@@ -268,10 +325,4 @@ func durationEnvOrDefault(key string, fallback time.Duration) time.Duration {
 
 	log.Printf("invalid %s=%q, using %s", key, value, fallback)
 	return fallback
-}
-
-func fatalUsage(format string, args ...any) {
-	_, _ = fmt.Fprintf(flag.CommandLine.Output(), format+"\n\n", args...)
-	flag.Usage()
-	os.Exit(2)
 }

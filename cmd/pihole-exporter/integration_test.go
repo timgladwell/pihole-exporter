@@ -5,9 +5,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -66,6 +69,72 @@ func TestExporterProcessServesMetrics(t *testing.T) {
 	// The image HEALTHCHECK runs exactly this, with no shell in the container.
 	if out, err := exec.Command(binary, "-healthcheck", "-listen", addr).CombinedOutput(); err != nil {
 		t.Fatalf("-healthcheck error = %v, output: %s", err, out)
+	}
+}
+
+// TestExporterProcessReleasesSessionOnSIGTERM is the signal path end to end:
+// SIGTERM must make the real process exit 0 after deleting its Pi-hole session.
+func TestExporterProcessReleasesSessionOnSIGTERM(t *testing.T) {
+	binary := buildExporterBinary(t)
+
+	var mu sync.Mutex
+	var deleted []string
+	stub := piholetest.Handler(t.Errorf)
+	stubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/api/auth" {
+			mu.Lock()
+			deleted = append(deleted, r.Header.Get("X-FTL-SID"))
+			mu.Unlock()
+		}
+		stub.ServeHTTP(w, r)
+	}))
+	defer stubServer.Close()
+	addr := freeAddr(t)
+
+	// Not CommandContext: cancelling its context sends SIGKILL.
+	cmd := exec.Command(binary)
+	cmd.Env = append(cmd.Environ(),
+		"LISTEN_ADDR="+addr,
+		"PIHOLE_BASE_URL="+stubServer.URL,
+		pihole.DefaultAppPasswordEnv+"=app-password",
+	)
+	logs := &strings.Builder{}
+	cmd.Stdout = logs
+	cmd.Stderr = logs
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start exporter: %v", err)
+	}
+	waited := make(chan error, 1)
+	go func() {
+		waited <- cmd.Wait()
+		close(waited) // later receives in Cleanup return at once
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill() // no-op if it already exited
+		<-waited
+		t.Logf("exporter output:\n%s", logs)
+	})
+
+	base := "http://" + addr
+	waitForHealthz(t, base)
+	getBody(t, base+"/metrics") // scrape once so there is a session to release
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal exporter: %v", err)
+	}
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatalf("exporter exit error = %v, want clean exit", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("exporter did not exit within 10s of SIGTERM")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deleted) != 1 || deleted[0] != "sid-1" {
+		t.Fatalf("deleted sessions = %v, want [sid-1]", deleted)
 	}
 }
 
